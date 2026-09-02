@@ -1,0 +1,39 @@
+{
+  "name": "extuitive-skill",
+  "version": "0.1.0",
+  "description": "Install the Extuitive agent skills into Claude Code or Codex CLI and connect them to the Extuitive MCP server.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fl100inc/extuitive-skill.git"
+  },
+  "homepage": "https://github.com/fl100inc/extuitive-skill#readme",
+  "bugs": {
+    "url": "https://github.com/fl100inc/extuitive-skill/issues"
+  },
+  "keywords": [
+    "extuitive",
+    "mcp",
+    "claude-code",
+    "codex",
+    "agent-skills",
+    "facebook-ads"
+  ],
+  "bin": {
+    "extuitive-skill": "bin/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "doctor": "node bin/cli.mjs doctor"
+  }
+}
