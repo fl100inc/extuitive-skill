@@ -1,9 +1,4 @@
----
-name: extuitive-workspace-setup
-description: Diagnose and repair an Extuitive workspace's Meta connection, including when a person has no workspaces yet or a workspace has stopped receiving Facebook ads data. Use when list_workspaces returns nothing, when Extuitive ads data looks stale, or when asked to connect or reconnect Meta.
----
-
-# Workspace and Meta connection
+# `/extuitive connect` — connect or repair Meta
 
 Each Extuitive workspace is one Facebook ads account. When something is wrong with that
 connection, the tools tell you what and where to send the person — your job is to route to the

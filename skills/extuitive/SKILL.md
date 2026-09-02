@@ -1,0 +1,47 @@
+---
+name: extuitive
+description: Work with Extuitive, where each workspace is one Facebook ads account. Upload images and videos in bulk, check how an upload is going and which files were accepted, connect or repair a Meta connection, or set Extuitive up from scratch. Use when asked to upload, add, or import creative, ad images, ad videos, or a folder of assets into Extuitive, to check an Extuitive upload, or when Extuitive tools are missing or refusing.
+argument-hint: "[init | upload | upload-status | connect]"
+arguments: command
+---
+
+# Extuitive
+
+One skill, four jobs. Read the reference for the job you are doing and follow it; this page
+only routes.
+
+## Which job
+
+The requested command is **`$command`**, from the full invocation `$ARGUMENTS`.
+
+If that is empty, or still reads as a literal `$command` because this host does not
+substitute arguments, work it out from what was actually asked instead.
+
+| Command | Read | For |
+| --- | --- | --- |
+| `init` | `references/init.md` | Nothing is set up yet, or the tools are missing |
+| `upload` | `references/upload.md` | Send local files into a workspace |
+| `upload-status` | `references/upload-status.md` | How is an upload going, what was accepted |
+| `connect` | `references/connect.md` | No workspaces, or ads data has gone stale |
+
+Anything else, or nothing at all: pick from the "For" column. An unrecognised command is
+worth one sentence — say what the four are — rather than a guess.
+
+`references/tools.md` documents every tool's arguments, the error vocabulary, and the status
+lifecycle. Reach for it when a call fails or a field is not what you expected.
+
+## True regardless of which job
+
+**The MCP tools never carry file bytes.** `create_upload_batch` hands back presigned storage
+URLs and whoever holds the files sends the bytes there directly. No tool accepts a file. If
+you cannot run shell commands, you cannot upload — use `create_browser_upload_link` and let
+the person do it from their browser.
+
+**Signing in happens in a browser and only the person can do it.** The token lands in this
+host's own credential store. You never see it, and no amount of retrying substitutes for it.
+
+**If the Extuitive tools are not in this session, stop and read `references/init.md`.** Do not
+invent setup commands. They differ per host and they change.
+
+**Uploading files is not an instruction to do anything with them.** Thirty images is not a
+request for thirty ads. Report what landed and wait.

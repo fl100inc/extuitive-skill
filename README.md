@@ -1,44 +1,55 @@
 # extuitive-skill
 
-Agent skills for [Extuitive](https://go.extuitive.com), plus an installer that connects
+An agent skill for [Extuitive](https://go.extuitive.com), plus an installer that connects
 Claude Code or Codex CLI to the Extuitive MCP server.
 
-An Extuitive workspace is one Facebook ads account. These skills let an agent upload creative
+An Extuitive workspace is one Facebook ads account. The skill lets an agent upload creative
 into a workspace, track how that upload is going, and repair a Meta connection that has
 stopped delivering data.
 
+Installed straight from this repository — there is no npm package:
+
 ```bash
-npx extuitive-skill install
+npx github:fl100inc/extuitive-skill install
 ```
 
-That copies four skills into your host's skills directory, registers the MCP server, and tells
-you how to sign in. Signing in happens in your browser — the installer never handles your
+That copies the skill into your host's skills directory, registers the MCP server, and tells
+you how to sign in. Signing in happens in your browser; the installer never handles your
 credentials.
 
-New to Extuitive? Create an account at **https://go.extuitive.com** first.
+**You do not need an Extuitive account first.** The sign-in page has a **Sign up** button
+next to **Log in**, both using a one-time email code, so you can create the account in the
+same browser step that grants your host access. If you have not connected Meta yet, that page
+then points you at the right setup step and brings you back.
 
 ## What gets installed
 
-| Skill | Invoke as | What it does |
-| --- | --- | --- |
-| `extuitive-init` | `/extuitive-init` | Set up from scratch: account, connection, sign-in |
-| `extuitive-upload` | `/extuitive-upload` | Upload a folder of images or videos into a workspace |
-| `extuitive-upload-status` | `/extuitive-upload-status` | Report how the current upload is going |
-| `extuitive-workspace-setup` | `/extuitive-workspace-setup` | Diagnose and repair a Meta connection |
+One skill, `extuitive`, which takes a command:
 
-Those are the Claude Code names. Codex uses `$extuitive-upload` and browses with `/skills`.
-Both hosts take a skill's name from its directory, so the names are the same on each.
+| Command | What it does |
+| --- | --- |
+| `/extuitive init` | Set up from scratch: connect, sign in, confirm it works |
+| `/extuitive upload` | Upload a folder of images or videos into a workspace |
+| `/extuitive upload-status` | Report how the current upload is going |
+| `/extuitive connect` | Connect Meta, or repair a workspace that has stopped updating |
 
-Except for `extuitive-init`, all of them are also invoked automatically when what you ask for
-matches — "upload these ads to Extuitive" reaches `extuitive-upload` without you naming it.
-`extuitive-init` only runs when you ask, since setup is not something to start mid-task.
+Arguments go after the command: `/extuitive upload ./creative` or
+`/extuitive upload-status <batch id>`.
+
+That is the Claude Code syntax. Codex uses `$extuitive` and browses with `/skills`. Both hosts
+take a skill's name from its directory, which is why there is one skill with commands rather
+than four skills — `/extuitive-upload` would be a separate directory each time, and the
+command form reads better and keeps one description in front of the model.
+
+You usually will not type any of it. Asking for the underlying thing — "upload these ads to
+Extuitive" — reaches the skill on its own.
 
 ## Install
 
 ### Claude Code
 
 ```bash
-npx extuitive-skill install --host claude
+npx github:fl100inc/extuitive-skill install --host claude
 ```
 
 Which does:
@@ -58,7 +69,7 @@ one project and looks broken in the next.
 ### Codex CLI
 
 ```bash
-npx extuitive-skill install --host codex --write-config
+npx github:fl100inc/extuitive-skill install --host codex --write-config
 ```
 
 Which does:
@@ -105,14 +116,14 @@ and whoever holds the files sends the bytes to those URLs directly. No tool acce
 That single fact splits the behaviour in two:
 
 - **A host that can run shell commands** — Claude Code, Codex — uses the script bundled in
-  `extuitive-upload/scripts/upload.mjs` to do the transfer, then reports the outcome through
+  `skills/extuitive/scripts/upload.mjs` to do the transfer, then reports the outcome through
   the tools.
 - **A host that cannot** uses `create_browser_upload_link` and hands the person a link to
   upload from their browser.
 
 It also means a finished transfer is not an accepted file. Bytes landing in storage starts a
 check that can still reject the file, so `READY` — not "upload complete" — is the only status
-that means success. Both upload skills are built around reporting that honestly.
+that means success. The upload and status flows are built around reporting that honestly.
 
 The bundled script holds no credential and makes no MCP calls. It receives presigned URLs,
 sends bytes, and reports ETags. Your access token stays in your host's credential store.
@@ -121,7 +132,7 @@ sends bytes, and reports ETags. Your access token stays in your host's credentia
 
 Fourteen tools in three groups. Full schemas, the error vocabulary, and the status lifecycle
 are in
-[`skills/extuitive-upload/references/tools.md`](skills/extuitive-upload/references/tools.md).
+[`skills/extuitive/references/tools.md`](skills/extuitive/references/tools.md).
 
 **Workspaces**
 
@@ -161,7 +172,7 @@ script only ever sees presigned URLs scoped to a single object, which expire.
 ## Troubleshooting
 
 ```bash
-npx extuitive-skill doctor
+npx github:fl100inc/extuitive-skill doctor
 ```
 
 It reports the endpoint, which skills are installed where, and what your host says about the
@@ -188,7 +199,7 @@ Common causes, in the order they usually happen:
 ## Local development
 
 ```bash
-npx extuitive-skill install --endpoint http://localhost:3001/mcp
+npx github:fl100inc/extuitive-skill install --endpoint http://localhost:3001/mcp
 ```
 
 Port 3001 is what the lead-magnet app binds with `npm run dev`.
@@ -196,7 +207,7 @@ Port 3001 is what the lead-magnet app binds with `npm run dev`.
 ## Uninstall
 
 ```bash
-npx extuitive-skill uninstall
+npx github:fl100inc/extuitive-skill uninstall
 ```
 
 Removes the skill directories. It leaves two things alone deliberately: anything under
@@ -212,18 +223,25 @@ skill it replaced would be loaded as a second, older copy of that skill.
 ## Repository layout
 
 ```
-bin/cli.mjs     install | uninstall | doctor
-src/            host detection, install, MCP setup, doctor
-skills/         the four skills, copied verbatim into your host
+bin/cli.mjs                 install | uninstall | doctor
+src/                        host detection, install, MCP setup, doctor
+skills/extuitive/
+  SKILL.md                  routes a command to its reference
+  references/               one file per command, plus the full tool reference
+  scripts/upload.mjs        byte transfer only; no credentials, no MCP calls
 ```
+
+`SKILL.md` stays short on purpose: it is loaded whenever the skill is considered, while a
+`references/` file is read only once the agent knows which job it is doing. Putting all four
+flows in the front page would spend context on three of them every time.
 
 `README.md` lives here at the repo root and nowhere else. Skill directories deliberately do
 not contain one — everything an agent reads belongs in `SKILL.md` or `references/`, and a
 `README.md` inside a skill folder is dead weight in its context window.
 
-Host-specific setup commands live only in `src/mcp-setup.mjs`. The skills never name them;
-they tell the agent to run `npx extuitive-skill doctor` and relay what it prints, so a change
-to either host's CLI is a fix in one file rather than four.
+Host-specific setup commands live only in `src/mcp-setup.mjs`. The skill never names them; it
+tells the agent to run `doctor` and relay what it prints, so a change to either host's CLI is
+a fix in one file rather than four.
 
 ## Licence
 

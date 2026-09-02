@@ -1,13 +1,9 @@
----
-name: extuitive-upload-status
-description: Check how an Extuitive upload is progressing and report which files were accepted or rejected. Use when asked how an upload is going, whether files finished uploading, what happened to a batch, or to check upload status in Extuitive.
-argument-hint: "[batch id]"
----
-
-# Upload status
+# `/extuitive upload-status` — how is an upload going
 
 Reports where an Extuitive upload has got to, and finishes by saying what was actually
 accepted.
+
+A `batchId` given with the command arrives in `$ARGUMENTS`.
 
 ## Why this is not just "did the transfer finish"
 
@@ -100,5 +96,4 @@ assembled. `list_upload_parts` shows what storage actually holds.
 
 ## More detail
 
-`../extuitive-upload/references/tools.md` has every tool's arguments and the full error
-vocabulary.
+`tools.md` has every tool's arguments and the full error vocabulary.

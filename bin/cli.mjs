@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `npx extuitive-skill install | uninstall | doctor`
+ * `npx github:fl100inc/extuitive-skill install | uninstall | doctor`
  *
  * Argument parsing, prompting, and printing. All the decisions live in `src/`; this file
  * exists to turn them into something readable in a terminal.
@@ -12,7 +12,12 @@
 import { createInterface } from "node:readline/promises";
 import process from "node:process";
 
-import { DEFAULT_MCP_ENDPOINT, LOGIN_URL, PACKAGE_NAME, SKILL_NAMES } from "../src/constants.mjs";
+import {
+  DEFAULT_MCP_ENDPOINT,
+  NPX_COMMAND,
+  PACKAGE_NAME,
+  SKILL_COMMANDS,
+} from "../src/constants.mjs";
 import { detectHosts, getHost, HOST_IDS } from "../src/hosts.mjs";
 import { installSkills, uninstallSkills } from "../src/install.mjs";
 import {
@@ -28,9 +33,9 @@ const USAGE = `
 ${PACKAGE_NAME} — install the Extuitive agent skills and connect them to the Extuitive MCP server.
 
 Usage
-  npx ${PACKAGE_NAME} install [options]
-  npx ${PACKAGE_NAME} uninstall [options]
-  npx ${PACKAGE_NAME} doctor [options]
+  ${NPX_COMMAND} install [options]
+  ${NPX_COMMAND} uninstall [options]
+  ${NPX_COMMAND} doctor [options]
 
 Options
   --host <claude|codex|both>  Which host to set up. Required without a TTY.
@@ -43,10 +48,10 @@ Options
   --json                      Machine-readable output (doctor only).
   --help, -h                  Show this message.
 
-Skills installed
-  ${SKILL_NAMES.join("\n  ")}
+Installs one skill, "extuitive", invoked with a command:
+  ${SKILL_COMMANDS.map((command) => `/extuitive ${command}`).join("\n  ")}
 
-New to Extuitive? Create an account at ${LOGIN_URL}
+No Extuitive account needed in advance — you can create one during sign-in.
 `.trim();
 
 function parseArgs(argv) {
@@ -200,8 +205,7 @@ async function commandInstall(options) {
 
   if (hostIds.length === 0) {
     console.log("Could not find Claude Code or Codex CLI on this machine.");
-    console.log(`Install one, then run: npx ${PACKAGE_NAME} install`);
-    console.log(`\nNew to Extuitive? Create an account at ${LOGIN_URL}`);
+    console.log(`Install one, then run: ${NPX_COMMAND} install`);
     return 1;
   }
 
@@ -285,8 +289,10 @@ async function commandInstall(options) {
     }
   }
 
-  console.log(`\nNo Extuitive account yet? Create one at ${LOGIN_URL}`);
-  console.log(`Check everything with: npx ${PACKAGE_NAME} doctor`);
+  console.log("\nNo Extuitive account yet? The sign-in page has a Sign up button —");
+  console.log("create one there with a one-time email code, in the same step.");
+  console.log(`\nCheck everything with: ${NPX_COMMAND} doctor`);
+  console.log(`Then try: /extuitive ${SKILL_COMMANDS[0]}`);
   return 0;
 }
 
@@ -360,7 +366,7 @@ async function commandDoctor(options) {
 
   if (report.anyHostDetected === false) {
     console.log("\nNo Claude Code or Codex CLI installation found.");
-    console.log(`Install one, then run: npx ${PACKAGE_NAME} install`);
+    console.log(`Install one, then run: ${NPX_COMMAND} install`);
     return 1;
   }
 

@@ -3,7 +3,7 @@
  *
  * Every command string for both hosts lives here. Install runs them, `doctor` prints them
  * when something is missing, and the skills reference neither — they tell the agent to run
- * `npx extuitive-skill doctor` and relay what it says. That indirection exists because these
+ * `<npx> doctor` and relay what it says. That indirection exists because these
  * strings are the most likely thing in the package to go stale: they belong to Claude Code
  * and Codex, not to us, and a skill reciting a command that no longer exists is worse than
  * a skill that stays quiet. Keeping them in one module means a host CLI change is a fix
@@ -19,7 +19,7 @@ import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { DEFAULT_MCP_ENDPOINT, MCP_SERVER_NAME, PACKAGE_NAME } from "./constants.mjs";
+import { DEFAULT_MCP_ENDPOINT, MCP_SERVER_NAME, NPX_COMMAND } from "./constants.mjs";
 import { formatCommand, run } from "./exec.mjs";
 
 function timestamp() {
@@ -283,7 +283,7 @@ export function manualSteps(
 
   steps.push({
     title: "Check it worked",
-    body: `npx ${PACKAGE_NAME} doctor`,
+    body: `${NPX_COMMAND} doctor`,
   });
 
   return steps;

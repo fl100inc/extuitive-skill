@@ -14,7 +14,7 @@
  * Doctor reports what the host says and otherwise says "unknown" — an installer that
  * announced success it had not verified would be wrong in exactly the case that matters.
  */
-import { DEFAULT_MCP_ENDPOINT, MCP_SERVER_NAME } from "./constants.mjs";
+import { DEFAULT_MCP_ENDPOINT, MCP_SERVER_NAME, NPX_COMMAND } from "./constants.mjs";
 import { detectHosts } from "./hosts.mjs";
 import { backupsRoot, findLegacyCopies, findShadowingBackups, inspectInstalledSkills } from "./install.mjs";
 import { manualSteps, readFeatureFlag, statusCommand } from "./mcp-setup.mjs";
@@ -160,19 +160,19 @@ export async function diagnoseHost(detection, options = {}) {
   if (skills.state === "absent") {
     problems.push({
       what: `No Extuitive skills in ${inspection.destinationRoot}.`,
-      fix: "Run: npx extuitive-skill install",
+      fix: `Run: ${NPX_COMMAND} install`,
     });
   } else if (skills.state === "partial") {
     if (skills.missing.length > 0) {
       problems.push({
         what: `Missing skills: ${skills.missing.map((skill) => skill.name).join(", ")}.`,
-        fix: "Run: npx extuitive-skill install",
+        fix: `Run: ${NPX_COMMAND} install`,
       });
     }
     for (const skill of skills.mismatched) {
       problems.push({
         what: `${skill.destination} declares name "${skill.declaredName}" but sits in a directory named "${skill.name}". Hosts key a skill on its directory, so this one will not load.`,
-        fix: "Reinstall to restore the bundled copy: npx extuitive-skill install",
+        fix: `Reinstall to restore the bundled copy: ${NPX_COMMAND} install`,
       });
     }
   }
@@ -203,7 +203,7 @@ export async function diagnoseHost(detection, options = {}) {
   if (server.state === "absent") {
     problems.push({
       what: `The MCP server is not registered with ${host.label}, so none of the Extuitive tools are available.`,
-      fix: "Run: npx extuitive-skill install",
+      fix: `Run: ${NPX_COMMAND} install`,
     });
   } else if (server.state === "needs_auth") {
     problems.push({
