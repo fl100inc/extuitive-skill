@@ -28,18 +28,29 @@ One skill, `extuitive`, which takes a command:
 
 | Command | What it does |
 | --- | --- |
-| `/extuitive init` | Set up from scratch: connect, sign in, confirm it works |
-| `/extuitive upload` | Upload a folder of images or videos into a workspace |
-| `/extuitive upload-status` | Report how the current upload is going |
-| `/extuitive connect` | Connect Meta, or repair a workspace that has stopped updating |
+| `init` | Set up from scratch: connect, sign in, confirm it works |
+| `upload` | Upload a folder of images or videos into a workspace |
+| `upload-status` | Report how the current upload is going |
+| `connect` | Connect Meta, or repair a workspace that has stopped updating |
+
+**The prefix differs by host, and using the wrong one looks like a broken install.**
+
+| Host | Invoke | Browse |
+| --- | --- | --- |
+| Claude Code | `/extuitive init` | `/skills` |
+| Codex CLI | `$extuitive init` | `/skills` |
+
+Codex reserves `/` for its own built-in commands, so `/extuitive` there returns
+`Unrecognized command '/extuitive'` even when the skill is installed correctly.
 
 Arguments go after the command: `/extuitive upload ./creative` or
-`/extuitive upload-status <batch id>`.
+`$extuitive upload-status <batch id>`. Claude Code substitutes them into the skill; Codex
+passes your wording through, which works because the command word is still sitting in the
+prompt the model reads.
 
-That is the Claude Code syntax. Codex uses `$extuitive` and browses with `/skills`. Both hosts
-take a skill's name from its directory, which is why there is one skill with commands rather
-than four skills — `/extuitive-upload` would be a separate directory each time, and the
-command form reads better and keeps one description in front of the model.
+Both hosts take a skill's name from its directory, which is why there is one skill with
+commands rather than four skills — `/extuitive-upload` would need a separate directory each
+time, and the command form reads better and keeps one description in front of the model.
 
 You usually will not type any of it. Asking for the underlying thing — "upload these ads to
 Extuitive" — reaches the skill on its own.

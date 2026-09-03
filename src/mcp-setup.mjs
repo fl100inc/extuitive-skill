@@ -286,5 +286,13 @@ export function manualSteps(
     body: `${NPX_COMMAND} doctor`,
   });
 
+  // The prefix is not cosmetic. Codex reserves `/` for its own commands and answers an
+  // unknown one with "Unrecognized command", which looks exactly like the skill failing
+  // to install, so the working syntax has to be stated rather than inferred.
+  steps.push({
+    title: `Use it in ${host.label}`,
+    body: `${host.invocationPrefix}extuitive init`,
+  });
+
   return steps;
 }

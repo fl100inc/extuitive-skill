@@ -287,12 +287,17 @@ async function commandInstall(options) {
     if (host.loadsSkillsAtStartup === true) {
       console.log(`\n  Then restart ${host.label}; it reads skills once at startup.`);
     }
+
+    // Printed per host rather than once at the end, because the prefix differs and the
+    // wrong one is indistinguishable from a failed install: Codex answers a `/` it does
+    // not know with "Unrecognized command".
+    console.log(`\n  Invoke it in ${host.label} with:`);
+    console.log(`    ${host.invocationPrefix}extuitive ${SKILL_COMMANDS[0]}`);
   }
 
   console.log("\nNo Extuitive account yet? The sign-in page has a Sign up button —");
   console.log("create one there with a one-time email code, in the same step.");
   console.log(`\nCheck everything with: ${NPX_COMMAND} doctor`);
-  console.log(`Then try: /extuitive ${SKILL_COMMANDS[0]}`);
   return 0;
 }
 
