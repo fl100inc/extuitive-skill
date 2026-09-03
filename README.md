@@ -56,7 +56,7 @@ Which does:
 
 ```bash
 # skills → ~/.claude/skills/
-claude mcp add --transport http extuitive https://app.extuitive.com/mcp --scope user
+claude mcp add --transport http extuitive https://go.extuitive.com/mcp --scope user
 ```
 
 Then sign in — run `/mcp` inside Claude Code, choose `extuitive`, and approve. Or
@@ -82,7 +82,7 @@ skills = true
 
 ```bash
 # skills → ~/.agents/skills/
-codex mcp add extuitive --url https://app.extuitive.com/mcp
+codex mcp add extuitive --url https://go.extuitive.com/mcp
 ```
 
 Then `codex mcp login extuitive` to sign in, and **restart Codex** — it reads skills once at
@@ -98,7 +98,7 @@ two lines to add yourself. Either way the file is backed up before it is touched
 | `--host <claude\|codex\|both>` | detected | Which host to set up. Required without a TTY. |
 | `--scope <user\|project>` | `user` | Every project, or only this one. |
 | `--dir <path>` | host default | Install skills somewhere else entirely. |
-| `--endpoint <url>` | `https://app.extuitive.com/mcp` | Point at a different server. |
+| `--endpoint <url>` | `https://go.extuitive.com/mcp` | Point at a different server. |
 | `--write-config` | off | Allow editing the host's config file. |
 | `--dry-run` | off | Report what would change, change nothing. |
 | `--yes`, `-y` | off | Take defaults, never prompt. |
@@ -159,7 +159,7 @@ are in
 
 ## The MCP server
 
-- **Endpoint** `https://app.extuitive.com/mcp`
+- **Endpoint** `https://go.extuitive.com/mcp`
 - **Transport** stateless Streamable HTTP JSON-RPC over `POST`
 - **Auth** OAuth 2.1, authorization code with PKCE `S256`, Dynamic Client Registration, scope `mcp`
 

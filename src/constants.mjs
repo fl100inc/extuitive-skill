@@ -18,7 +18,7 @@ export const GITHUB_REPO = "fl100inc/extuitive-skill";
 export const NPX_COMMAND = `npx github:${GITHUB_REPO}`;
 
 /** Overridable with `--endpoint` for development against a local dev server. */
-export const DEFAULT_MCP_ENDPOINT = "https://app.extuitive.com/mcp";
+export const DEFAULT_MCP_ENDPOINT = "https://go.extuitive.com/mcp";
 
 /**
  * The name both hosts register the server under.

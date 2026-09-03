@@ -3,7 +3,7 @@
 Every tool the Extuitive MCP server exposes, with its arguments and what it gives back. Read
 this when you need a schema or an error meaning; the `SKILL.md` files carry the procedures.
 
-Server endpoint is `https://app.extuitive.com/mcp`. Every tool except `list_workspaces`,
+Server endpoint is `https://go.extuitive.com/mcp`. Every tool except `list_workspaces`,
 `get_meta_setup_status`, and `create_meta_reconnect_link`'s sibling takes a `workspaceId`, and
 membership is re-checked on every single call — a token issued before someone left a workspace
 does not still reach it.
