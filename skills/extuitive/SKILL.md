@@ -1,13 +1,13 @@
 ---
 name: extuitive
-description: Work with Extuitive, where each workspace is one Facebook ads account. Upload images and videos in bulk, check how an upload is going and which files were accepted, connect or repair a Meta connection, or set Extuitive up from scratch. Use when asked to upload, add, or import creative, ad images, ad videos, or a folder of assets into Extuitive, to check an Extuitive upload, or when Extuitive tools are missing or refusing.
-argument-hint: "[init | upload | upload-status | connect]"
+description: Work with Extuitive, where each workspace is one Facebook ads account. Choose which ad account to work in, upload images and videos in bulk, check how an upload is going and which files were accepted, connect or repair a Meta connection, or set Extuitive up from scratch. Use when asked to upload, add, or import creative, ad images, ad videos, or a folder of assets into Extuitive, to check an Extuitive upload, to pick or switch which Extuitive workspace or ad account to work in, or when Extuitive tools are missing or refusing.
+argument-hint: "[init | select | upload | upload-status | connect]"
 arguments: command
 ---
 
 # Extuitive
 
-One skill, four jobs. Read the reference for the job you are doing and follow it; this page
+One skill, five jobs. Read the reference for the job you are doing and follow it; this page
 only routes.
 
 ## Which job
@@ -20,12 +20,13 @@ substitute arguments, work it out from what was actually asked instead.
 | Command | Read | For |
 | --- | --- | --- |
 | `init` | `references/init.md` | Nothing is set up yet, or the tools are missing |
+| `select` | `references/select.md` | Choose which ad account the rest of this session works in |
 | `upload` | `references/upload.md` | Send local files into a workspace |
 | `upload-status` | `references/upload-status.md` | How is an upload going, what was accepted |
 | `connect` | `references/connect.md` | No workspaces, or ads data has gone stale |
 
 Anything else, or nothing at all: pick from the "For" column. An unrecognised command is
-worth one sentence — say what the four are — rather than a guess.
+worth one sentence — say what the five are — rather than a guess.
 
 `references/tools.md` documents every tool's arguments, the error vocabulary, and the status
 lifecycle. Reach for it when a call fails or a field is not what you expected.
@@ -50,3 +51,7 @@ request for thirty ads. Report what landed and wait.
 which tools will accept it — `role` and `isOwner` govern reconnecting Meta and nothing else —
 so "use this one for uploads" is a claim you can only make after one worked. Two workspaces
 can point at the same ad account and behave differently. Ask rather than choose.
+
+**Ask which workspace once, then stop asking.** A choice made anywhere in the conversation —
+through `select`, or in passing while asking for something else — holds until they change it
+or the session ends. Re-asking on every upload is its own kind of wrong answer.

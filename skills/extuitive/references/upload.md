@@ -21,7 +21,11 @@ If the Extuitive tools are missing entirely, read `init.md` instead.
 
 ## 1. Pick the workspace
 
-Call `list_workspaces`. If there is more than one and the person did not say which, ask.
+If one was already chosen earlier in this conversation, use it, and name it in the first thing
+you say — a mistaken choice is cheap to correct before the files move and expensive after.
+
+Otherwise call `list_workspaces`. If there is more than one and the person did not say which,
+ask; `select.md` covers how to lay the options out.
 
 Ask even when two rows share a `facebookAdAccountId`. They are two workspaces, and the files
 land in whichever one you use. **Do not pick by `role` or `isOwner`** — those govern who can

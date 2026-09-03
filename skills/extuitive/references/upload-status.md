@@ -27,7 +27,10 @@ In order of preference:
    one. This is also the right call when someone uploaded through a browser link, since you
    never saw a `batchId` for that.
 
-If you do not know which workspace, call `list_workspaces` first.
+If you do not know which workspace, use the one chosen earlier in this conversation, or call
+`list_workspaces` first when there was none. A `batchId` belongs to the workspace it was
+created in, so a batch from before a switch needs the workspace it was made in rather than the
+current one.
 
 A single file uploaded on its own has no `batchId` at all. Use `get_upload_content` with its
 `contentId` instead — same status rules apply.

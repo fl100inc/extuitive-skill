@@ -3,9 +3,9 @@
 An agent skill for [Extuitive](https://go.extuitive.com), plus an installer that connects
 Claude Code or Codex CLI to the Extuitive MCP server.
 
-An Extuitive workspace is one Facebook ads account. The skill lets an agent upload creative
-into a workspace, track how that upload is going, and repair a Meta connection that has
-stopped delivering data.
+An Extuitive workspace is one Facebook ads account. The skill lets an agent pick which account
+to work in, upload creative into it, track how that upload is going, and repair a Meta
+connection that has stopped delivering data.
 
 Installed straight from this repository — there is no npm package:
 
@@ -29,6 +29,7 @@ One skill, `extuitive`, which takes a command:
 | Command | What it does |
 | --- | --- |
 | `init` | Set up from scratch: connect, sign in, confirm it works |
+| `select` | Choose which ad account the rest of the session works in |
 | `upload` | Upload a folder of images or videos into a workspace |
 | `upload-status` | Report how the current upload is going |
 | `connect` | Connect Meta, or repair a workspace that has stopped updating |
@@ -49,7 +50,7 @@ passes your wording through, which works because the command word is still sitti
 prompt the model reads.
 
 Both hosts take a skill's name from its directory, which is why there is one skill with
-commands rather than four skills — `/extuitive-upload` would need a separate directory each
+commands rather than five skills — `/extuitive-upload` would need a separate directory each
 time, and the command form reads better and keeps one description in front of the model.
 
 You usually will not type any of it. Asking for the underlying thing — "upload these ads to
@@ -294,8 +295,8 @@ skills/extuitive/
 ```
 
 `SKILL.md` stays short on purpose: it is loaded whenever the skill is considered, while a
-`references/` file is read only once the agent knows which job it is doing. Putting all four
-flows in the front page would spend context on three of them every time.
+`references/` file is read only once the agent knows which job it is doing. Putting all five
+flows in the front page would spend context on four of them every time.
 
 `README.md` lives here at the repo root and nowhere else. Skill directories deliberately do
 not contain one — everything an agent reads belongs in `SKILL.md` or `references/`, and a
