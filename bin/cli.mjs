@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `npx github:fl100inc/extuitive-skill install | uninstall | doctor`
+ * `npx github:fl100inc/extuitive-skill install | update | uninstall | doctor`
  *
  * Argument parsing, prompting, and printing. All the decisions live in `src/`; this file
  * exists to turn them into something readable in a terminal.
@@ -19,21 +19,31 @@ import {
   SKILL_COMMANDS,
 } from "../src/constants.mjs";
 import { detectHosts, getHost, HOST_IDS } from "../src/hosts.mjs";
-import { installSkills, uninstallSkills } from "../src/install.mjs";
+import {
+  backupsRoot,
+  inspectInstalledSkills,
+  installSkills,
+  otherSkillsInRoot,
+  removeLegacyCopies,
+  uninstallSkills,
+} from "../src/install.mjs";
 import {
   authInstructions,
+  disableFeatureFlag,
   enableFeatureFlag,
   manualSteps,
   readFeatureFlag,
   registerMcpServer,
+  unregisterMcpServer,
 } from "../src/mcp-setup.mjs";
-import { diagnose } from "../src/doctor.mjs";
+import { diagnose, readHostServerStatus } from "../src/doctor.mjs";
 
 const USAGE = `
 ${PACKAGE_NAME} — install the Extuitive agent skills and connect them to the Extuitive MCP server.
 
 Usage
   ${NPX_COMMAND} install [options]
+  ${NPX_COMMAND} update [options]
   ${NPX_COMMAND} uninstall [options]
   ${NPX_COMMAND} doctor [options]
 
@@ -43,10 +53,15 @@ Options
   --dir <path>                Install into this directory instead of the host's default.
   --endpoint <url>            MCP endpoint. Default: ${DEFAULT_MCP_ENDPOINT}
   --write-config              Allow editing the host config file to enable Codex skills.
+  --keep-server               Leave the MCP server registered (uninstall only).
   --dry-run                   Report what would change without changing anything.
   --yes, -y                   Accept defaults; never prompt.
   --json                      Machine-readable output (doctor only).
   --help, -h                  Show this message.
+
+update refreshes an install already on this machine and stays quiet when there is
+nothing to do. uninstall removes the skills and the MCP registration; it never
+touches your backups.
 
 Installs one skill, "extuitive", invoked with a command:
   ${SKILL_COMMANDS.map((command) => `/extuitive ${command}`).join("\n  ")}
@@ -62,6 +77,7 @@ function parseArgs(argv) {
     dir: null,
     endpoint: DEFAULT_MCP_ENDPOINT,
     writeConfig: false,
+    keepServer: false,
     dryRun: false,
     yes: false,
     json: false,
@@ -80,6 +96,8 @@ function parseArgs(argv) {
       options.yes = true;
     } else if (arg === "--write-config") {
       options.writeConfig = true;
+    } else if (arg === "--keep-server") {
+      options.keepServer = true;
     } else if (arg === "--json") {
       options.json = true;
     } else if (arg === "--host") {
@@ -102,8 +120,10 @@ function parseArgs(argv) {
   return options;
 }
 
+const COMMANDS = ["install", "update", "uninstall", "doctor"];
+
 function validate(options) {
-  if (options.command !== null && ["install", "uninstall", "doctor"].includes(options.command) === false) {
+  if (options.command !== null && COMMANDS.includes(options.command) === false) {
     throw new Error(`Unknown command: ${options.command}`);
   }
   if (["user", "project"].includes(options.scope) === false) {
@@ -301,6 +321,188 @@ async function commandInstall(options) {
   return 0;
 }
 
+/**
+ * Hosts that already have a copy of the skill, which is not the same set as hosts that exist.
+ *
+ * Update refreshes what is there rather than installing anywhere new: someone who chose
+ * Claude Code only should not acquire a Codex install by running update. An explicit `--host`
+ * overrides that, since naming a host is asking for it.
+ */
+async function resolveUpdateTargets(options, detections) {
+  if (options.host !== null) {
+    return resolveHostIds(options, detections);
+  }
+
+  const targets = [];
+  for (const detection of detections.filter((candidate) => candidate.installed === true)) {
+    const inspection = await inspectInstalledSkills(detection.host, {
+      scope: options.scope,
+      dir: options.dir,
+    });
+    if (inspection.skills.some((skill) => skill.present === true) === true) {
+      targets.push(detection.host.id);
+    }
+  }
+  return targets;
+}
+
+/**
+ * Refresh an existing install in place.
+ *
+ * `install` already does the file work correctly and idempotently, so this is deliberately
+ * thin. What makes it a separate command is everything it does *not* print: an update is a
+ * routine thing to run repeatedly, and re-issuing the sign-in steps, the sign-up pitch and
+ * the invocation reminder every time trains people to ignore all of it. Steps appear here
+ * only when something actually needs doing.
+ */
+async function commandUpdate(options) {
+  const detections = detectHosts();
+  const hostIds = await resolveUpdateTargets(options, detections);
+
+  if (hostIds.length === 0) {
+    console.log("The Extuitive skill is not installed here yet.");
+    console.log(`Install it with: ${NPX_COMMAND} install`);
+    return 1;
+  }
+
+  if (options.dryRun === true) {
+    console.log("Dry run — nothing will be written.\n");
+  }
+
+  const interactive = process.stdin.isTTY === true && options.yes === false;
+
+  for (const hostId of hostIds) {
+    const host = getHost(hostId);
+    const detection = detections.find((candidate) => candidate.host.id === hostId);
+    heading(host.label);
+
+    const result = await installSkills(host, {
+      scope: options.scope,
+      dir: options.dir,
+      dryRun: options.dryRun,
+    });
+
+    const changed = result.skills.filter((skill) => skill.action !== "unchanged");
+    console.log(`  Skills → ${result.destinationRoot}`);
+    for (const skill of result.skills) {
+      const note = skill.backup === null ? "" : ` (previous copy kept at ${skill.backup})`;
+      console.log(`${BULLET} ${skill.name} ${skill.action}${note}`);
+    }
+
+    const flag = await readFeatureFlag(host);
+    if (flag.required === true && flag.enabled === false) {
+      const allowed =
+        options.writeConfig === true ||
+        (interactive === true && (await confirm(`\n  Enable skills in ${flag.path}?`)));
+
+      if (allowed === true) {
+        const applied = await enableFeatureFlag(host, { dryRun: options.dryRun });
+        if (applied.status === "enabled") {
+          const backup = applied.backup === null ? "" : ` (backup at ${applied.backup})`;
+          console.log(`${BULLET} Enabled skills in ${applied.path}${backup}`);
+        } else if (applied.status === "skipped_dry_run") {
+          console.log(`${BULLET} Would enable skills in ${applied.path}`);
+        }
+      } else {
+        console.log(`${BULLET} Skills are not enabled in ${flag.path}. Add:`);
+        console.log("       [features]");
+        console.log("       skills = true");
+        console.log("     or rerun with --write-config.");
+      }
+    }
+
+    // Asking the host is the only way to tell "never registered" from "registered but not
+    // signed in"; both look like a 401 from outside. Update acts on the first and only
+    // mentions the second, because signing in is not something it can do for anyone.
+    const server = readHostServerStatus(host, { cliAvailable: detection?.cliAvailable ?? false });
+
+    if (server.state === "absent") {
+      const registration = await registerMcpServer(host, {
+        endpoint: options.endpoint,
+        scope: options.scope,
+        dryRun: options.dryRun,
+        cliAvailable: detection?.cliAvailable ?? false,
+      });
+
+      if (registration.status === "registered") {
+        console.log(`${BULLET} Registered the MCP server (${registration.command})`);
+      } else if (registration.status === "already_registered") {
+        console.log(`${BULLET} MCP server already registered`);
+      } else if (registration.status === "skipped_dry_run") {
+        console.log(`${BULLET} Would run: ${registration.command}`);
+      } else if (registration.status === "cli_missing") {
+        console.log(`${BULLET} ${host.cli} is not on PATH, so the server was not registered.`);
+      } else {
+        console.log(`${BULLET} Could not register the MCP server: ${registration.detail}`);
+      }
+    } else if (server.state === "needs_auth") {
+      const auth = authInstructions(host);
+      console.log(`${BULLET} The server is registered but not signed in:`);
+      console.log(`       ${auth.primary}`);
+      if (auth.alternative !== null) {
+        console.log(`       or: ${auth.alternative}`);
+      }
+    } else if (server.state === "unknown") {
+      console.log(`${BULLET} MCP server: ${server.detail}`);
+    } else {
+      console.log(`${BULLET} MCP server registered`);
+    }
+
+    if (changed.length === 0) {
+      console.log("\n  Already up to date.");
+      continue;
+    }
+
+    // Only when files moved. Codex reads skills once at startup, so a refresh that rewrote
+    // nothing gives nobody a reason to restart.
+    if (host.loadsSkillsAtStartup === true && options.dryRun === false) {
+      console.log(`\n  Restart ${host.label} to pick this up; it reads skills once at startup.`);
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * Codex's skills flag, put back only when doing so cannot break anything else.
+ *
+ * `[features] skills = true` is global: it is what lets Codex load skills at all, not just
+ * ours. Reverting it because we happen to be leaving would silently disable every other
+ * skill the user has, which is a far worse outcome than a leftover line in a config file. So
+ * the flag comes off only when the skills root has nothing else in it, and otherwise the
+ * reason for leaving it is stated rather than passed over in silence.
+ */
+async function revertFeatureFlag(host, options, interactive) {
+  const flag = await readFeatureFlag(host);
+  if (flag.required === false || flag.enabled === false) {
+    return;
+  }
+
+  const others = await otherSkillsInRoot(host, { scope: options.scope, dir: options.dir });
+  if (others.length > 0) {
+    console.log(`${BULLET} Left skills enabled in ${flag.path} — ${host.label} still has`);
+    console.log(`     ${others.join(", ")} there, which the flag also governs.`);
+    return;
+  }
+
+  const allowed =
+    options.writeConfig === true ||
+    (interactive === true && (await confirm(`\n  Turn skills back off in ${flag.path}?`)));
+
+  if (allowed === false) {
+    console.log(`${BULLET} Left skills enabled in ${flag.path}.`);
+    return;
+  }
+
+  const applied = await disableFeatureFlag(host, { dryRun: options.dryRun });
+  if (applied.status === "disabled") {
+    const backup = applied.backup === null ? "" : ` (backup at ${applied.backup})`;
+    console.log(`${BULLET} Turned skills off in ${applied.path}${backup}`);
+  } else if (applied.status === "skipped_dry_run") {
+    console.log(`${BULLET} Would turn skills off in ${applied.path}`);
+  }
+}
+
 async function commandUninstall(options) {
   const detections = detectHosts();
   const hostIds = resolveHostIds(options, detections);
@@ -310,9 +512,17 @@ async function commandUninstall(options) {
     return 0;
   }
 
+  if (options.dryRun === true) {
+    console.log("Dry run — nothing will be removed.\n");
+  }
+
+  const interactive = process.stdin.isTTY === true && options.yes === false;
+
   for (const hostId of hostIds) {
     const host = getHost(hostId);
+    const detection = detections.find((candidate) => candidate.host.id === hostId);
     heading(host.label);
+
     const result = await uninstallSkills(host, {
       scope: options.scope,
       dir: options.dir,
@@ -323,9 +533,49 @@ async function commandUninstall(options) {
       console.log(`${BULLET} ${skill.name} ${skill.action}`);
     }
 
-    console.log(`\n  The MCP server registration and your sign-in are ${host.label}'s, not ours.`);
-    console.log(`  Remove them yourself if you want to: ${host.cli} mcp remove extuitive`);
+    // Codex scans its legacy directory too, so a copy left there survives the removal above
+    // and keeps loading — the skill appears to come back.
+    const legacy = await removeLegacyCopies(host, { dryRun: options.dryRun });
+    for (const copy of legacy) {
+      console.log(`${BULLET} ${copy.name} removed from ${copy.path}`);
+    }
+
+    if (options.keepServer === true) {
+      console.log(`${BULLET} Left the MCP server registered (--keep-server).`);
+    } else {
+      const removal = await unregisterMcpServer(host, {
+        scope: options.scope,
+        dryRun: options.dryRun,
+        cliAvailable: detection?.cliAvailable ?? false,
+      });
+
+      if (removal.status === "unregistered") {
+        console.log(`${BULLET} Unregistered the MCP server (${removal.command})`);
+      } else if (removal.status === "already_absent") {
+        console.log(`${BULLET} MCP server was not registered`);
+      } else if (removal.status === "skipped_dry_run") {
+        console.log(`${BULLET} Would run: ${removal.command}`);
+      } else if (removal.status === "cli_missing") {
+        console.log(`${BULLET} ${host.cli} is not on PATH, so the server is still registered.`);
+        console.log(`     Remove it yourself: ${removal.command}`);
+      } else {
+        console.log(`${BULLET} Could not unregister the MCP server: ${removal.detail}`);
+        console.log(`     Remove it yourself: ${removal.command}`);
+      }
+    }
+
+    await revertFeatureFlag(host, options, interactive);
+
+    // Said plainly because it is the one thing an uninstall cannot finish. The token lives
+    // in the host's own credential store, which is not ours to read or clear, so claiming a
+    // clean removal without mentioning it would be a claim we cannot back.
+    console.log(`\n  Your sign-in is still in ${host.label}'s credential store; that is its`);
+    console.log("  to hold, not ours to clear. Revoking access is done from Extuitive.");
   }
+
+  console.log(`\nBackups were left alone at ${backupsRoot()}`);
+  console.log("They exist because an install found a skill it did not write. Delete them");
+  console.log("yourself once you are sure you do not want them.");
 
   return 0;
 }
@@ -427,13 +677,16 @@ async function main() {
     return options.command === null && options.help === false ? 2 : 0;
   }
 
-  if (options.command === "install") {
-    return commandInstall(options);
-  }
-  if (options.command === "uninstall") {
-    return commandUninstall(options);
-  }
-  return commandDoctor(options);
+  // Dispatched by name with no fallback. A default of `doctor` would answer a mistyped
+  // command by silently running something else and reporting success.
+  const commands = {
+    install: commandInstall,
+    update: commandUpdate,
+    uninstall: commandUninstall,
+    doctor: commandDoctor,
+  };
+
+  return commands[options.command](options);
 }
 
 main()

@@ -111,6 +111,7 @@ two lines to add yourself. Either way the file is backed up before it is touched
 | `--dir <path>` | host default | Install skills somewhere else entirely. |
 | `--endpoint <url>` | `https://go.extuitive.com/mcp` | Point at a different server. |
 | `--write-config` | off | Allow editing the host's config file. |
+| `--keep-server` | off | Uninstall only: leave the MCP server registered. |
 | `--dry-run` | off | Report what would change, change nothing. |
 | `--yes`, `-y` | off | Take defaults, never prompt. |
 
@@ -215,17 +216,53 @@ npx github:fl100inc/extuitive-skill install --endpoint http://localhost:3001/mcp
 
 Port 3001 is what the lead-magnet app binds with `npm run dev`.
 
+## Update
+
+```bash
+npx github:fl100inc/extuitive-skill update
+```
+
+Refreshes an install that is already here. It only touches hosts that already have the skill,
+so running it will not quietly add Codex to a machine set up for Claude Code alone — pass
+`--host` if that is what you want.
+
+It rewrites skill files that changed, reports `unchanged` for those that did not, and prints
+`Already up to date.` when there was nothing to do. It re-registers the MCP server only if
+your host has lost the registration, and mentions signing in only if your host says it is not
+signed in. The restart reminder appears only when files actually moved, since that is the only
+time Codex needs one.
+
+`install` does the same file work — it has always compared trees and backed up anything that
+differed — so an update is safe to do either way. The difference is what gets printed: install
+walks you through sign-in and shows you how to invoke the skill every time, which is the right
+thing once and noise on the fifth run.
+
+The package is fetched from this repository rather than a registry, so `npx` resolves the ref
+on each run and an update picks up whatever is on `main`.
+
 ## Uninstall
 
 ```bash
 npx github:fl100inc/extuitive-skill uninstall
 ```
 
-Removes the skill directories. It leaves two things alone deliberately: anything under
-`~/.extuitive-skill/backups/`, which exists because an install found a skill that differed
-from the one it was about to write, and the MCP registration plus your stored sign-in, which
-belong to your host. Remove that yourself with `claude mcp remove extuitive` or
-`codex mcp remove extuitive`.
+Removes the skill directories, deletes any stale copy in Codex's legacy `~/.codex/skills`, and
+unregisters the MCP server from your host. Pass `--keep-server` to drop the skills but keep the
+tools registered.
+
+Two things are deliberately left behind.
+
+**Your backups**, under `~/.extuitive-skill/backups/`. Each one exists because an install found
+a skill that differed from the one it was about to write, so it may be the only copy of
+something you wrote. The uninstall prints the path; deleting them is your call.
+
+**Your sign-in.** The OAuth token lives in your host's own credential store, which is not ours
+to read or clear. Revoke access from Extuitive if you want it gone.
+
+Codex's `[features] skills = true` is a third case, handled conditionally. That flag is what
+lets Codex load skills at all — not just ours — so turning it off on the way out would silently
+disable every other skill you have. Uninstall offers to revert it only when nothing else is
+left in your skills directory, and otherwise says which skills it left it on for.
 
 Backups live outside the skills directories on purpose. Both hosts treat every directory in
 their skills root as a skill, and Codex searches it recursively, so a backup kept next to the
@@ -234,7 +271,7 @@ skill it replaced would be loaded as a second, older copy of that skill.
 ## Repository layout
 
 ```
-bin/cli.mjs                 install | uninstall | doctor
+bin/cli.mjs                 install | update | uninstall | doctor
 src/                        host detection, install, MCP setup, doctor
 skills/extuitive/
   SKILL.md                  routes a command to its reference

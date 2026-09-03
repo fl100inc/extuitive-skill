@@ -230,6 +230,56 @@ export async function uninstallSkills(host, options = {}) {
   return { host: host.id, destinationRoot, skills: results, dryRun };
 }
 
+/**
+ * Delete our skills from Codex's legacy `~/.codex/skills`.
+ *
+ * `findLegacyCopies` has always been able to name these, but only `doctor` used it, so an
+ * uninstall that cleaned the current location left a still-loadable copy in the old one —
+ * the skill would keep appearing after being removed. Only directories matching our own
+ * skill names are touched; anything else in there belongs to someone else.
+ */
+export async function removeLegacyCopies(host, { dryRun = false } = {}) {
+  const copies = await findLegacyCopies(host);
+
+  for (const copy of copies) {
+    if (dryRun === false) {
+      await rm(copy.path, { recursive: true, force: true });
+    }
+  }
+
+  return copies;
+}
+
+/**
+ * Skills in a host's skills root that are not ours.
+ *
+ * Uninstall needs this before it touches Codex's feature flag: the flag governs every skill
+ * Codex loads, so turning it off to tidy up after ourselves would quietly disable skills the
+ * user wrote. Backup directories are excluded — they are not skills anyone is choosing to
+ * keep loadable, and `doctor` already reports them as a problem in their own right.
+ */
+export async function otherSkillsInRoot(host, options = {}) {
+  const { scope = "user", dir = null, cwd = process.cwd() } = options;
+  const root = resolveSkillsRoot(host, { scope, dir, cwd });
+
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  return entries
+    .filter(
+      (entry) =>
+        entry.isDirectory() === true &&
+        SKILL_NAMES.includes(entry.name) === false &&
+        /\.backup-/.test(entry.name) === false &&
+        existsSync(join(root, entry.name, "SKILL.md")) === true,
+    )
+    .map((entry) => entry.name);
+}
+
 /** Which of our skills are present in a host's skills root, for `doctor`. */
 export async function inspectInstalledSkills(host, options = {}) {
   const { scope = "user", dir = null, cwd = process.cwd() } = options;

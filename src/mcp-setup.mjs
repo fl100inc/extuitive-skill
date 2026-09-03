@@ -56,6 +56,29 @@ export function registerCommand(host, { endpoint = DEFAULT_MCP_ENDPOINT, scope =
 }
 
 /**
+ * The command that takes the server back out.
+ *
+ * Claude Code needs the scope repeated. Removal looks in one scope at a time and defaults to
+ * `local`, so a remove without `--scope user` reports success having deleted nothing — the
+ * user-scoped entry install wrote is still there. Codex keeps a single list and takes only a
+ * name.
+ */
+export function unregisterCommand(host, { scope = "user" } = {}) {
+  if (host.id === "claude") {
+    return {
+      command: host.cli,
+      args: ["mcp", "remove", MCP_SERVER_NAME, "--scope", scope === "project" ? "project" : "user"],
+    };
+  }
+
+  if (host.id === "codex") {
+    return { command: host.cli, args: ["mcp", "remove", MCP_SERVER_NAME] };
+  }
+
+  throw new Error(`Unknown host: ${host.id}`);
+}
+
+/**
  * How a person completes OAuth.
  *
  * Never run for them. The flow opens a browser and finishes against their own session, so
@@ -168,7 +191,72 @@ export async function registerMcpServer(host, options = {}) {
   };
 }
 
-const FEATURE_FLAG_PATTERN = /^\s*skills\s*=\s*(true|false)\s*$/m;
+/**
+ * Unregister the server, or explain how to.
+ *
+ * Reports rather than throws, for the same reason registration does: by the time this runs
+ * the skills are already gone, and aborting on a CLI that refused would leave a half-removed
+ * setup with no message about which half.
+ */
+export async function unregisterMcpServer(host, options = {}) {
+  const { scope = "user", dryRun = false, cliAvailable } = options;
+  const { command, args } = unregisterCommand(host, { scope });
+  const rendered = formatCommand(command, args);
+
+  if (cliAvailable === false) {
+    return { status: "cli_missing", command: rendered };
+  }
+
+  if (dryRun === true) {
+    return { status: "skipped_dry_run", command: rendered };
+  }
+
+  const timeoutMs = 30_000;
+  const result = run(command, args, { timeoutMs });
+
+  if (result.timedOut === true) {
+    return {
+      status: "failed",
+      command: rendered,
+      detail:
+        `${host.cli} did not finish within ${timeoutMs / 1000}s and was stopped. Run it yourself ` +
+        `in a terminal: ${rendered}`,
+    };
+  }
+
+  // Checked before the exit status, not after, because removing a server that was never
+  // there is a *success* for Codex: `codex mcp remove missing` prints "No MCP server named
+  // 'missing' found." and exits 0. Reading only the exit code would report having removed
+  // something that was not there, which is the one thing an uninstall must not invent.
+  const output = `${result.stdout}\n${result.stderr}`.toLowerCase();
+  const absent = ["not found", "no such", "does not exist", "no mcp server"].some((phrase) =>
+    output.includes(phrase),
+  );
+  if (absent === true) {
+    return { status: "already_absent", command: rendered };
+  }
+
+  if (result.ok === true) {
+    return { status: "unregistered", command: rendered };
+  }
+
+  return {
+    status: "failed",
+    command: rendered,
+    detail: (result.stderr || result.stdout).trim(),
+  };
+}
+
+/**
+ * The flag line, matched without ever crossing a line break.
+ *
+ * `[^\S\n]` rather than `\s` is load-bearing. `\s` matches newlines, and since the bounds are
+ * greedy an `\s*$` at the end consumes the terminating newline as part of the match — so
+ * rewriting the value would delete the line break with it and produce
+ * `[features]skills = false`, which is not valid TOML. Horizontal whitespace only keeps the
+ * match inside its own line and lets `$` sit before the newline instead of after it.
+ */
+const FEATURE_FLAG_PATTERN = /^[^\S\n]*skills[^\S\n]*=[^\S\n]*(true|false)[^\S\n]*$/m;
 
 /**
  * Whether Codex's experimental skills flag is on.
@@ -247,6 +335,60 @@ export async function enableFeatureFlag(host, { dryRun = false } = {}) {
 
   await writeFile(path, contents, "utf8");
   return { status: "enabled", path, backup };
+}
+
+/**
+ * Turn the flag back off.
+ *
+ * Rewrites the value in place rather than deleting the key or the `[features]` table it sits
+ * in. This is a file the user owns, TOML, and possibly holding settings that have nothing to
+ * do with us; a one-line value change is the smallest edit that undoes what install did, and
+ * it leaves a readable `skills = false` behind instead of a table that may now be empty.
+ *
+ * Whether it is safe to do at all is the caller's decision — the flag governs every skill
+ * Codex loads, not only ours.
+ */
+export async function disableFeatureFlag(host, { dryRun = false } = {}) {
+  const state = await readFeatureFlag(host);
+  if (state.required === false || state.enabled === false) {
+    return { status: "not_needed", path: state.path };
+  }
+
+  const path = state.path;
+  if (dryRun === true) {
+    return { status: "skipped_dry_run", path };
+  }
+
+  const contents = await readFile(path, "utf8");
+
+  // Scoped to the `[features]` body rather than run over the whole file, because `skills` is
+  // a plausible key in another table and rewriting someone else's value would be a silent,
+  // unrelated config change.
+  const section = /^\s*\[features\]\s*$/m.exec(contents);
+  if (section === null) {
+    return { status: "not_needed", path };
+  }
+  const bodyStart = section.index + section[0].length;
+  const after = contents.slice(bodyStart);
+  const nextSection = /^\s*\[/m.exec(after);
+  const bodyEnd = nextSection === null ? contents.length : bodyStart + nextSection.index;
+  const body = contents.slice(bodyStart, bodyEnd);
+
+  if (FEATURE_FLAG_PATTERN.test(body) === false) {
+    return { status: "not_needed", path };
+  }
+
+  const backup = `${path}.backup-${timestamp()}`;
+  await copyFile(path, backup);
+  await writeFile(
+    path,
+    contents.slice(0, bodyStart) +
+      body.replace(FEATURE_FLAG_PATTERN, "skills = false") +
+      contents.slice(bodyEnd),
+    "utf8",
+  );
+
+  return { status: "disabled", path, backup };
 }
 
 /** The literal lines a user needs when nothing can be done for them automatically. */
