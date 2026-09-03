@@ -82,15 +82,26 @@ export function unregisterCommand(host, { scope = "user" } = {}) {
  * How a person completes OAuth.
  *
  * Never run for them. The flow opens a browser and finishes against their own session, so
- * the honest thing is to name the step and stop. Claude Code offers both an in-session panel
- * and a CLI command; the panel is listed first because it is the one that works when the
- * server was just added and the session is already open.
+ * the honest thing is to name the step and stop.
+ *
+ * Claude Code gets `/mcp` and nothing else. `claude mcp login extuitive` is a real command
+ * on new enough versions, but offering it here was a bug: what reads this output is usually
+ * an agent inside a Claude Code session, and the one thing it can do with a shell command is
+ * run it — in bash mode, in a session that has no `extuitive` server to log into, on a
+ * version that may not have the subcommand at all. Every one of those fails in a way that
+ * looks like the install failed. `/mcp` is the person's own panel and cannot be run by
+ * mistake on their behalf.
+ *
+ * `inSession` says where the step happens, which decides the order of everything around it.
+ * Claude Code signs in from inside a session and so cannot do it before restarting; Codex
+ * signs in from a terminal and so can do it whenever.
  */
 export function authInstructions(host) {
   if (host.id === "claude") {
     return {
-      primary: "Run /mcp inside Claude Code, choose extuitive, and approve access.",
-      alternative: formatCommand(host.cli, ["mcp", "login", MCP_SERVER_NAME]),
+      primary: "Run /mcp, choose extuitive, and approve access.",
+      alternative: null,
+      inSession: true,
     };
   }
 
@@ -98,10 +109,26 @@ export function authInstructions(host) {
     return {
       primary: formatCommand(host.cli, ["mcp", "login", MCP_SERVER_NAME]),
       alternative: null,
+      inSession: false,
     };
   }
 
   throw new Error(`Unknown host: ${host.id}`);
+}
+
+/**
+ * Why nothing is visible yet, in the host's own terms.
+ *
+ * Stated as its own sentence everywhere it appears because it is the step people skip and
+ * then report as a broken install: the server is registered, the endpoint is fine, `mcp list`
+ * agrees, and the session still has no Extuitive tools. On Claude Code it also gates sign-in,
+ * so it has to be said before the sign-in step rather than after it.
+ */
+export function restartNotice(host) {
+  if (host.loadsSkillsAtStartup === true) {
+    return `${host.label} reads MCP servers and skills once at startup, so neither is visible until you restart it.`;
+  }
+  return `${host.label} connects MCP servers when a session starts, so extuitive is not in the session you ran this from — and /mcp cannot sign in to a server that session never connected to.`;
 }
 
 /** The command that reports per-server health, which `doctor` prefers over its own probing. */
@@ -410,18 +437,18 @@ export function manualSteps(
   const { command, args } = registerCommand(host, { endpoint, scope });
   steps.push({ title: "Register the MCP server", body: formatCommand(command, args) });
 
+  // The restart and the sign-in are ordered by where the sign-in happens. On Claude Code it
+  // happens inside a session, and `/mcp` offers only servers that session connected to at
+  // startup — so a list that signs in first and restarts second describes something nobody
+  // can do. Codex signs in from a terminal and restarts afterwards to pick up the skills.
   const auth = authInstructions(host);
-  steps.push({
+  const restart = { title: `Start a new ${host.label} session`, body: restartNotice(host) };
+  const signIn = {
     title: "Sign in",
     body: auth.alternative === null ? auth.primary : `${auth.primary}\n${auth.alternative}`,
-  });
+  };
 
-  if (host.loadsSkillsAtStartup === true) {
-    steps.push({
-      title: `Restart ${host.label}`,
-      body: "Skills are read once at startup, so new ones are invisible until you restart.",
-    });
-  }
+  steps.push(...(auth.inSession === true ? [restart, signIn] : [signIn, restart]));
 
   steps.push({
     title: "Check it worked",

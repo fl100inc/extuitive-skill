@@ -8,19 +8,24 @@ Server endpoint is `https://go.extuitive.com/mcp`. Every tool except `list_works
 membership is re-checked on every single call — a token issued before someone left a workspace
 does not still reach it.
 
-## Read this first: four things that cause wrong answers
+## Read this first: five things that cause wrong answers
 
-1. **`count` is not the batch size.** In `get_upload_batch_content`, `count` describes only
+1. **`role` and `isOwner` say nothing about uploading.** They decide one thing only: who may
+   call `create_meta_reconnect_link`. A workspace where this caller is `viewer` may accept
+   uploads that the one where they are `owner` refuses. Nothing in a `list_workspaces` row
+   predicts which workspaces the upload tools will accept, so never present one as the right
+   one for uploads — ask, or try and report what happened.
+2. **`count` is not the batch size.** In `get_upload_batch_content`, `count` describes only
    the rows returned after filtering. `statusCounts`, `pending`, and `settled` always describe
    the whole batch. Filtering to `["READY"]` and reading `count` makes an unfinished upload
    look complete.
-2. **`complete_upload` uses S3's capitalisation.** `PartNumber` and `ETag`, not `partNumber`
+3. **`complete_upload` uses S3's capitalisation.** `PartNumber` and `ETag`, not `partNumber`
    and `eTag`. They are the only non-camelCase fields in the entire surface.
-3. **`sign_upload_part` does not give you the checksum.** You compute
+4. **`sign_upload_part` does not give you the checksum.** You compute
    `x-amz-checksum-crc32c` yourself over the exact bytes of that part and send it as a header.
    The signature covers that header, so S3 rejects the part when it is missing or wrong. The
    bundled `scripts/upload.mjs` does this for you.
-4. **No tool is annotated.** None declares `readOnlyHint`, `destructiveHint`, or an output
+5. **No tool is annotated.** None declares `readOnlyHint`, `destructiveHint`, or an output
    schema, so nothing can be inferred about safety from the listing. `abort_upload` is
    destructive and carries no marking.
 
@@ -38,14 +43,21 @@ Returns `{ workspaces: [...] }`, each with:
 | --- | --- |
 | `workspaceId` | Pass this to every other tool |
 | `name`, `slug` | Display |
-| `role` | This caller's role in the workspace |
-| `facebookAdAccountId` | The Meta ads account, or `null` |
-| `isOwner` | Whether this caller owns the workspace |
+| `role` | This caller's role in the workspace. Governs reconnect only |
+| `facebookAdAccountId` | The Meta ads account, or `null`. Not unique across workspaces |
+| `isOwner` | Whether this caller owns the workspace. Governs reconnect only |
 | `metaConnection.status` | `healthy`, `expiring`, `token_invalid`, `missing_scope`, `ad_account_permission` |
 | `metaConnection.daysUntilExpiry` | Whole days, or `null` when Meta gave no expiry |
 | `metaConnection.canReconnect` | Whether *this* caller can fix it |
 
 An empty list means no workspace, not no access. Follow with `get_meta_setup_status`.
+
+Two rows can carry the same `facebookAdAccountId`. They are still two separate workspaces
+with separate content, not one workspace listed twice, so do not merge them or pick between
+them on the person's behalf. Whichever they choose is the one their files will be in.
+
+A row in this list is also not a guarantee that every tool will accept its `workspaceId`; see
+`workspace_access_denied` below.
 
 ## Meta connection
 
@@ -228,3 +240,13 @@ they are yours to read and act on rather than hard failures.
 
 Genuine protocol faults — an unknown tool, malformed JSON-RPC — arrive as JSON-RPC errors
 instead, and mean something is wrong with the call itself rather than its arguments.
+
+### `workspace_access_denied` on an id from `list_workspaces`
+
+This happens, and it is not something to solve by reasoning. Membership is re-checked on every
+call against the tool being called, so a workspace can appear in the list and still refuse an
+upload. Retrying will not change it, and neither `role` nor `isOwner` predicts it.
+
+Say plainly which id was refused and which one worked, and carry on with the one that worked.
+If you had already told the person to use the refused one, correct that in the same breath —
+they are about to look for their files in a workspace that has none.

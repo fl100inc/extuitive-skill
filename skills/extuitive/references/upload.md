@@ -23,6 +23,12 @@ If the Extuitive tools are missing entirely, read `init.md` instead.
 
 Call `list_workspaces`. If there is more than one and the person did not say which, ask.
 
+Ask even when two rows share a `facebookAdAccountId`. They are two workspaces, and the files
+land in whichever one you use. **Do not pick by `role` or `isOwner`** — those govern who can
+reconnect Meta and say nothing about uploading, so a workspace where they are `viewer` may
+take files that the one where they are `owner` refuses. Describe both rows and let them
+choose.
+
 If it comes back **empty**, they have no workspace rather than no access. Read `connect.md`.
 There is nothing to upload into yet.
 
@@ -46,6 +52,11 @@ Call `create_upload_batch` with every remaining file declared at once: `fileName
 
 You get back a `batchId` and one destination per file, in the order you sent them. Keep the
 `batchId` — step 6 and `upload-status.md` both need it.
+
+If it refuses with `workspace_access_denied`, that workspace will not take these files no
+matter what its row said. Move to another workspace they have, and tell them the batch is in
+that one instead — including if it contradicts a workspace you named earlier. Do not retry the
+refused id, and do not explain the refusal in terms of their role; it does not follow from it.
 
 Each destination is one of two kinds:
 

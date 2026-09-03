@@ -70,8 +70,15 @@ Which does:
 claude mcp add --transport http extuitive https://go.extuitive.com/mcp --scope user
 ```
 
-Then sign in — run `/mcp` inside Claude Code, choose `extuitive`, and approve. Or
-`claude mcp login extuitive`.
+Then **start a new Claude Code session** — servers are connected at startup, so `extuitive`
+is not in the session you installed from. In that new session run `/mcp`, choose `extuitive`,
+and approve.
+
+`/mcp` is the whole sign-in story on Claude Code. There is a `claude mcp login` on recent
+versions, but it is left out on purpose: this output is usually read by an agent inside a
+Claude Code session, and a shell command is the one thing an agent will run for you — from
+the wrong session, possibly on a version without the subcommand, into a browser redirect its
+shell cannot receive.
 
 `--scope user` matters. The default is `local`, which ties the server to whichever directory
 you ran the command in, while your skills are available everywhere. That combination works in
@@ -149,6 +156,8 @@ are in
 **Workspaces**
 
 - `list_workspaces` — every workspace you can reach, with the health of its Meta connection.
+  Its `role` and `isOwner` decide who may reconnect Meta and nothing else, and two workspaces
+  can point at the same ad account, so neither field tells you where to upload.
 
 **Meta connection**
 
@@ -176,7 +185,9 @@ are in
 - **Auth** OAuth 2.1, authorization code with PKCE `S256`, Dynamic Client Registration, scope `mcp`
 
 Workspace membership is verified on every workspace-scoped call rather than once at sign-in,
-so leaving a workspace takes effect immediately.
+so leaving a workspace takes effect immediately. It is checked per call, not per listing, so a
+workspace can appear in `list_workspaces` and still answer `workspace_access_denied` to an
+upload — the skill treats that as a fact to report and route around, not one to explain.
 
 This package stores no credential of any kind. Your host holds the OAuth token; the upload
 script only ever sees presigned URLs scoped to a single object, which expire.
@@ -199,8 +210,11 @@ Common causes, in the order they usually happen:
   checks this.
 - **A stale duplicate.** Codex still scans the legacy `~/.codex/skills` alongside
   `~/.agents/skills`, so an old copy can shadow a new one. `doctor` names any it finds.
+- **The install said it worked and the tools are not there.** Both hosts connect MCP servers
+  when a session starts, so a server registered from inside a running session — or by an
+  agent in one — is invisible to it. Start a new session before concluding anything.
 - **Tools are listed but every call is refused.** Sign-in was never completed. Run `/mcp` in
-  Claude Code or `codex mcp login extuitive`.
+  Claude Code, or `codex mcp login extuitive` in a terminal.
 - **A `403` part-way through an upload.** Presigned URLs last 30 minutes and a whole batch is
   signed at once, so late files in a big batch can expire mid-transfer. The script reports
   these as `needsResign` and `needsPartResign`; the fix is `resign_upload` or
@@ -229,8 +243,8 @@ so running it will not quietly add Codex to a machine set up for Claude Code alo
 It rewrites skill files that changed, reports `unchanged` for those that did not, and prints
 `Already up to date.` when there was nothing to do. It re-registers the MCP server only if
 your host has lost the registration, and mentions signing in only if your host says it is not
-signed in. The restart reminder appears only when files actually moved, since that is the only
-time Codex needs one.
+signed in. The restart reminder appears only when something actually changed — files that
+moved, or a registration it had to put back.
 
 `install` does the same file work — it has always compared trees and backed up anything that
 differed — so an update is safe to do either way. The difference is what gets printed: install
@@ -290,6 +304,13 @@ not contain one — everything an agent reads belongs in `SKILL.md` or `referenc
 Host-specific setup commands live only in `src/mcp-setup.mjs`. The skill never names them; it
 tells the agent to run `doctor` and relay what it prints, so a change to either host's CLI is
 a fix in one file rather than four.
+
+That file also decides the order of the last two steps. Sign-in and restart are printed in
+whichever order the host can actually do them: Claude Code signs in from inside a session, so
+it has to restart first, while Codex signs in from a terminal and restarts afterwards to pick
+up the skills. Anything printed here should assume its reader is an agent, which will run a
+shell command it is shown — so a sign-in step that cannot survive being run that way does not
+belong in the output.
 
 ## Licence
 

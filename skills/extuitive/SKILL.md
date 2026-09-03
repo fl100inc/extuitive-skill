@@ -45,3 +45,8 @@ invent setup commands. They differ per host and they change.
 
 **Uploading files is not an instruction to do anything with them.** Thirty images is not a
 request for thirty ads. Report what landed and wait.
+
+**Say what a tool returned, not what it implies.** The fields on a workspace do not predict
+which tools will accept it — `role` and `isOwner` govern reconnecting Meta and nothing else —
+so "use this one for uploads" is a claim you can only make after one worked. Two workspaces
+can point at the same ad account and behave differently. Ask rather than choose.

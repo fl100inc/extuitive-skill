@@ -21,12 +21,19 @@ has been completed, and it prints the exact next command for their host.
 `doctor` reads the current ones. A stale command sends someone down a dead end that looks
 like the product is broken.
 
-Two things worth saying plainly while they do this:
+Relay what `doctor` prints, in the order it prints it. Three things are worth saying plainly
+while they work through it:
 
 - **Signing in happens in a browser and only they can do it.** It opens a page, they approve
   access, and the token goes into their host's credential store. You never see it.
-- **Some hosts read skills and servers only at startup.** If `doctor` says everything is fine
-  but the tools still are not here, restarting the host is the fix.
+- **Do not run the sign-in step yourself.** If `doctor` prints a slash command, it belongs to
+  the person's session, not your shell; if it prints a shell command, it opens a browser and
+  waits for a redirect your shell cannot receive. Either way, running it produces a failure
+  that reads as a broken install. Print the step and stop.
+- **The tools will not appear in this session.** Hosts connect MCP servers when a session
+  starts, so nothing registered while you have been running is visible to you, and on some
+  hosts skills are read once at startup too. Say so, and ask them to start a fresh session
+  before checking. Retrying the tools here will not make them exist.
 
 ## 2. Do they have an account?
 
@@ -54,3 +61,8 @@ Once the tools are available, call `list_workspaces`.
 At least one workspace from `list_workspaces`. Until then, do not start on anything else they
 asked for: uploads and reporting both need a `workspaceId`, and every one of those tools will
 refuse without it.
+
+When setup started from a session with no Extuitive tools, that call belongs to the next
+session, not this one. Finish by handing over the remaining steps and saying which one they
+are on — not by declaring it working, and not by checking again for tools that cannot arrive
+until they restart.

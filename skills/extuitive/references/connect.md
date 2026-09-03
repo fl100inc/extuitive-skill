@@ -4,6 +4,10 @@ Each Extuitive workspace is one Facebook ads account. When something is wrong wi
 connection, the tools tell you what and where to send the person — your job is to route to the
 right one and relay what it says.
 
+The reverse does not hold: two workspaces can point at the same ads account, each with its own
+connection and its own `canReconnect`. Repairing one does not repair the other, so check the
+`metaConnection` on the workspace you are actually being asked about.
+
 ## Two different problems
 
 They look similar and have different fixes, so identify which one you have before acting.

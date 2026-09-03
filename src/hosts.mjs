@@ -15,6 +15,9 @@
  *   so `featureFlag` is null there rather than a no-op default.
  * - Codex reads skills once at startup. Claude Code picks up new ones live. That single
  *   fact decides whether install has to end by telling someone to restart.
+ * - Both hosts connect MCP servers when a session starts, which is tracked separately from
+ *   skills because on Claude Code the two differ: a skill copied in mid-session is live, the
+ *   server registered alongside it is not.
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -53,6 +56,7 @@ export const HOST_IDS = ["claude", "codex"];
  *   markerPath: string,
  *   featureFlag: { file: string, section: string, key: string } | null,
  *   loadsSkillsAtStartup: boolean,
+ *   loadsMcpAtStartup: boolean,
  *   invocationPrefix: string,
  * }}
  */
@@ -71,6 +75,10 @@ export function getHost(id) {
       // Project and personal skills are re-read as they change, so a fresh copy is live
       // without a restart.
       loadsSkillsAtStartup: false,
+      // The server is not. Claude Code connects its MCP servers when a session starts, and
+      // `/mcp` lists only what the session connected to — so the session that ran the
+      // install cannot sign in to what the install just registered.
+      loadsMcpAtStartup: true,
       invocationPrefix: "/",
     };
   }
@@ -94,6 +102,7 @@ export function getHost(id) {
         key: "skills",
       },
       loadsSkillsAtStartup: true,
+      loadsMcpAtStartup: true,
       invocationPrefix: "$",
     };
   }

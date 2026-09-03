@@ -34,6 +34,7 @@ import {
   manualSteps,
   readFeatureFlag,
   registerMcpServer,
+  restartNotice,
   unregisterMcpServer,
 } from "../src/mcp-setup.mjs";
 import { diagnose, readHostServerStatus } from "../src/doctor.mjs";
@@ -298,14 +299,29 @@ async function commandInstall(options) {
       continue;
     }
 
+    // On Claude Code the restart comes first, because signing in means opening `/mcp` in a
+    // session that has the server — which the session this ran from does not. Getting that
+    // order wrong is the failure people report as a broken install.
     const auth = authInstructions(host);
-    console.log("\n  Next, sign in — this opens a browser and only you can complete it:");
-    console.log(`    ${auth.primary}`);
-    if (auth.alternative !== null) {
-      console.log(`    or: ${auth.alternative}`);
-    }
-    if (host.loadsSkillsAtStartup === true) {
-      console.log(`\n  Then restart ${host.label}; it reads skills once at startup.`);
+    const printRestart = () => {
+      console.log(`\n  ${auth.inSession === true ? "Next" : "Then"}, start a new ${host.label} session.`);
+      console.log(`  ${restartNotice(host)}`);
+    };
+    const printSignIn = () => {
+      const lead = auth.inSession === true ? "Then sign in" : "Next, sign in";
+      console.log(`\n  ${lead} — this opens a browser and only you can complete it:`);
+      console.log(`    ${auth.primary}`);
+      if (auth.alternative !== null) {
+        console.log(`    or: ${auth.alternative}`);
+      }
+    };
+
+    if (auth.inSession === true) {
+      printRestart();
+      printSignIn();
+    } else {
+      printSignIn();
+      printRestart();
     }
 
     // Printed per host rather than once at the end, because the prefix differs and the
@@ -415,6 +431,7 @@ async function commandUpdate(options) {
     // signed in"; both look like a 401 from outside. Update acts on the first and only
     // mentions the second, because signing in is not something it can do for anyone.
     const server = readHostServerStatus(host, { cliAvailable: detection?.cliAvailable ?? false });
+    let registeredNow = false;
 
     if (server.state === "absent") {
       const registration = await registerMcpServer(host, {
@@ -425,6 +442,7 @@ async function commandUpdate(options) {
       });
 
       if (registration.status === "registered") {
+        registeredNow = true;
         console.log(`${BULLET} Registered the MCP server (${registration.command})`);
       } else if (registration.status === "already_registered") {
         console.log(`${BULLET} MCP server already registered`);
@@ -438,7 +456,12 @@ async function commandUpdate(options) {
     } else if (server.state === "needs_auth") {
       const auth = authInstructions(host);
       console.log(`${BULLET} The server is registered but not signed in:`);
-      console.log(`       ${auth.primary}`);
+      if (auth.inSession === true) {
+        console.log(`       ${restartNotice(host)}`);
+        console.log(`       Then: ${auth.primary}`);
+      } else {
+        console.log(`       ${auth.primary}`);
+      }
       if (auth.alternative !== null) {
         console.log(`       or: ${auth.alternative}`);
       }
@@ -448,15 +471,20 @@ async function commandUpdate(options) {
       console.log(`${BULLET} MCP server registered`);
     }
 
-    if (changed.length === 0) {
+    if (changed.length === 0 && registeredNow === false) {
       console.log("\n  Already up to date.");
       continue;
     }
 
-    // Only when files moved. Codex reads skills once at startup, so a refresh that rewrote
-    // nothing gives nobody a reason to restart.
-    if (host.loadsSkillsAtStartup === true && options.dryRun === false) {
-      console.log(`\n  Restart ${host.label} to pick this up; it reads skills once at startup.`);
+    // Only when something actually changed. A refresh that rewrote nothing gives nobody a
+    // reason to restart — but a server registered just now is a reason even on Claude Code,
+    // where skills alone would not have been.
+    const restartNeeded =
+      (host.loadsSkillsAtStartup === true && changed.length > 0) ||
+      (host.loadsMcpAtStartup === true && registeredNow === true);
+    if (restartNeeded === true && options.dryRun === false) {
+      console.log(`\n  Start a new ${host.label} session to pick this up.`);
+      console.log(`  ${restartNotice(host)}`);
     }
   }
 

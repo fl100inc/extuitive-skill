@@ -17,7 +17,7 @@
 import { DEFAULT_MCP_ENDPOINT, MCP_SERVER_NAME, NPX_COMMAND } from "./constants.mjs";
 import { detectHosts } from "./hosts.mjs";
 import { backupsRoot, findLegacyCopies, findShadowingBackups, inspectInstalledSkills } from "./install.mjs";
-import { manualSteps, readFeatureFlag, statusCommand } from "./mcp-setup.mjs";
+import { authInstructions, readFeatureFlag, restartNotice, statusCommand } from "./mcp-setup.mjs";
 import { run } from "./exec.mjs";
 
 /**
@@ -87,10 +87,25 @@ export async function probeEndpoint(endpoint = DEFAULT_MCP_ENDPOINT, { timeoutMs
 }
 
 /**
+ * Whether a line is about our server, as opposed to merely mentioning it.
+ *
+ * Claude Code lists claude.ai connectors alongside registered servers, and people name those
+ * after the service — a connector called "Extuitive" prints a line carrying our name, our
+ * endpoint and a healthy `✔ Connected`. Matching on substring finds it and reports a
+ * registration that does not exist, which is the one wrong answer doctor must not give.
+ * The name is the first token on the line: before the `:` Claude Code uses, or the run of
+ * spaces Codex's table uses.
+ */
+function namesOurServer(line) {
+  const [first = ""] = line.trim().split(/[:\s]/, 1);
+  return first.toLowerCase() === MCP_SERVER_NAME;
+}
+
+/**
  * The host's own view of the server.
  *
  * Parsed from human-readable output, so it is written to degrade rather than mislead: a line
- * mentioning the server is enough to say it is registered, and only clear signals move it to
+ * naming the server is enough to say it is registered, and only clear signals move it to
  * `needs_auth` or `failed`. Anything unrecognized stays `registered`, because "we could not
  * read the status" must not be reported as "it is broken".
  */
@@ -106,13 +121,19 @@ export function readHostServerStatus(host, { cliAvailable }) {
     return { state: "unknown", detail: `Could not run ${command} ${args.join(" ")}.` };
   }
 
-  const output = `${result.stdout}\n${result.stderr}`;
-  const line = output
-    .split("\n")
-    .find((candidate) => candidate.toLowerCase().includes(MCP_SERVER_NAME));
+  const lines = `${result.stdout}\n${result.stderr}`.split("\n");
+  const line = lines.find(namesOurServer);
 
   if (line === undefined) {
-    return { state: "absent", detail: `${host.label} has no server named ${MCP_SERVER_NAME}.` };
+    // Reported rather than passed over, because from the outside it looks like the install
+    // did nothing: the host lists something called Extuitive, and doctor says there is no
+    // Extuitive server. Naming the other entry is the difference between those two facts.
+    const lookalike = lines.find((candidate) => candidate.toLowerCase().includes(MCP_SERVER_NAME));
+    return {
+      state: "absent",
+      detail: `${host.label} has no server named ${MCP_SERVER_NAME}.`,
+      lookalike: lookalike === undefined ? null : lookalike.trim(),
+    };
   }
 
   const lowered = line.toLowerCase();
@@ -145,7 +166,7 @@ function skillSummary(inspection) {
 
 /** Everything doctor knows about one host. */
 export async function diagnoseHost(detection, options = {}) {
-  const { scope = "user", dir = null, cwd = process.cwd(), endpoint = DEFAULT_MCP_ENDPOINT } = options;
+  const { scope = "user", dir = null, cwd = process.cwd() } = options;
   const { host, cliAvailable, configPresent } = detection;
 
   const inspection = await inspectInstalledSkills(host, { scope, dir, cwd });
@@ -200,18 +221,26 @@ export async function diagnoseHost(detection, options = {}) {
     });
   }
 
-  if (server.state === "absent") {
+  if (server.state === "absent" && server.lookalike != null) {
+    problems.push({
+      what: `${host.label} has no server named ${MCP_SERVER_NAME}, but it does list "${server.lookalike}" — a separate entry that happens to share the name.`,
+      fix:
+        `If the Extuitive tools already work in your session, that entry is providing them and there is nothing to do here.\n` +
+        `If they do not, register this one too: ${NPX_COMMAND} install`,
+    });
+  } else if (server.state === "absent") {
     problems.push({
       what: `The MCP server is not registered with ${host.label}, so none of the Extuitive tools are available.`,
       fix: `Run: ${NPX_COMMAND} install`,
     });
   } else if (server.state === "needs_auth") {
+    const auth = authInstructions(host);
     problems.push({
       what: `${host.label} has the server but is not signed in.`,
-      fix: manualSteps(host, { endpoint, scope })
-        .filter((step) => step.title === "Sign in")
-        .map((step) => step.body)
-        .join("\n"),
+      // The restart is part of the fix, not a footnote to it: on Claude Code the sign-in
+      // panel is only reachable from a session that already connected to the server.
+      fix:
+        auth.inSession === true ? `${restartNotice(host)}\nThen: ${auth.primary}` : auth.primary,
     });
   } else if (server.state === "failed") {
     problems.push({
@@ -220,10 +249,14 @@ export async function diagnoseHost(detection, options = {}) {
     });
   }
 
-  if (host.loadsSkillsAtStartup === true && skills.state === "installed") {
+  // Raised for both hosts, because the failure it explains is the same on both: everything
+  // below reads healthy and the session still has no Extuitive tools. Doctor cannot tell
+  // whether a restart has already happened — it runs in a shell, not in the session — so it
+  // says the fact and leaves the "if you have not" to the reader.
+  if (skills.state === "installed" && server.state !== "absent") {
     problems.push({
-      what: `${host.label} reads skills once at startup.`,
-      fix: `Restart ${host.label} if you have not since installing.`,
+      what: restartNotice(host),
+      fix: `Start a new ${host.label} session if you have not since installing.`,
       advisory: true,
     });
   }
