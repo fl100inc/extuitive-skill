@@ -35,8 +35,9 @@ lifecycle. Reach for it when a call fails or a field is not what you expected.
 
 **The MCP tools never carry file bytes.** `create_upload_batch` hands back presigned storage
 URLs and whoever holds the files sends the bytes there directly. No tool accepts a file. If
-you cannot run shell commands, you cannot upload — use `create_browser_upload_link` and let
-the person do it from their browser.
+you cannot open the person's files, you cannot upload — use `create_browser_upload_link` and
+let them do it from their browser. Being able to run code is not the same as being able to
+read their disk; some hosts give you one without the other.
 
 **Signing in happens in a browser and only the person can do it.** The token lands in this
 host's own credential store. You never see it, and no amount of retrying substitutes for it.

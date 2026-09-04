@@ -10,12 +10,18 @@ none, ask what to upload before doing anything else.
 **The MCP tools never carry file bytes.** `create_upload_batch` returns presigned storage
 URLs; whoever has the files sends the bytes to those URLs directly.
 
-So decide which case you are in:
+So decide which case you are in. The question is whether you can **read the person's files**,
+which is not the same as whether you can run code:
 
-- **You can run shell commands.** Use `../scripts/upload.mjs`, as below.
+- **You can open the paths they gave you.** Use `../scripts/upload.mjs`, as below.
 - **You cannot.** Do not call `create_upload_batch` — a batch you cannot fill sits unfinished
   and later reads as a failed upload. Call `create_browser_upload_link`, give the person the
   link, and skip to step 6.
+
+Some hosts run your code in a container that holds this skill but not the person's disk, so a
+working `node` and a readable `../scripts/upload.mjs` prove nothing about `~/creative/`. If a
+path they named does not open, you are in the second case — say so and hand over the link,
+rather than asking them to attach thirty files to the conversation.
 
 If the Extuitive tools are missing entirely, read `init.md` instead.
 

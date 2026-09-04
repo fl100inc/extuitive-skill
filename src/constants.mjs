@@ -21,7 +21,7 @@ export const NPX_COMMAND = `npx github:${GITHUB_REPO}`;
 export const DEFAULT_MCP_ENDPOINT = "https://go.extuitive.com/mcp";
 
 /**
- * The name both hosts register the server under.
+ * The name every host registers the server under.
  *
  * Not one of Claude Code's reserved names (`workspace`, `claude-in-chrome`, `computer-use`,
  * `Claude Preview`, `Claude Browser`), which it refuses at add time.
@@ -31,10 +31,14 @@ export const MCP_SERVER_NAME = "extuitive";
 /**
  * One skill, whose directory name is also its command name.
  *
- * Both hosts key a skill on its directory, so this string is what someone types: `/extuitive`
- * in Claude Code, `$extuitive` in Codex. The individual jobs are arguments to it rather than
- * skills of their own — `/extuitive upload` — which is why there is only one entry here.
- * It must equal the `name` in SKILL.md's frontmatter.
+ * The CLI hosts key a skill on its directory, so this string is what someone types:
+ * `/extuitive` in Claude Code, `$extuitive` in Codex. Claude Desktop has no prefix at all
+ * and selects on the description instead, which is why `invocationNote` exists on a host
+ * rather than a prefix being assumed everywhere.
+ *
+ * The individual jobs are arguments to it rather than skills of their own — `/extuitive
+ * upload` — which is why there is only one entry here. It must equal the `name` in
+ * SKILL.md's frontmatter.
  */
 export const SKILL_NAMES = ["extuitive"];
 

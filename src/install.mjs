@@ -1,19 +1,24 @@
 /**
- * Copying skill directories into a host, and taking them back out.
+ * Getting skill directories into a host, and taking them back out.
+ *
+ * Two shapes of host, kept apart by `skillDelivery`. Most scan a directory, so installing is
+ * copying. Claude Desktop takes an upload instead — its Chat-tab skills are account-bound
+ * rather than files on this machine — so installing there means building a `.zip` and
+ * handing over the path.
  *
  * The only genuinely delicate part is overwriting. This writes into directories people also
  * author skills in by hand, so a reinstall that silently replaced an edited SKILL.md would
- * destroy work with no way back. Every overwrite moves the existing directory aside to a
+ * destroy work with no way back. Every overwrite moves the existing copy aside to a
  * timestamped sibling first, and the report says where it went.
  */
-import { cp, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { SKILL_NAMES } from "./constants.mjs";
-import { resolveSkillsRoot } from "./hosts.mjs";
+import { resolveSkillsRoot, stateRoot } from "./hosts.mjs";
+import { createZip, zipHoldsEntries } from "./zip.mjs";
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -31,7 +36,7 @@ export function bundledSkillsDir() {
  * other. Keeping them here means a backup is recoverable without ever being loadable.
  */
 export function backupsRoot() {
-  return join(homedir(), ".extuitive-skill", "backups");
+  return join(stateRoot(), "backups");
 }
 
 function timestamp() {
@@ -201,6 +206,169 @@ export async function installSkills(host, options = {}) {
   }
 
   return { host: host.id, destinationRoot, skills: results, dryRun };
+}
+
+/**
+ * A fixed timestamp for every file in a bundle, so that rebuilding unchanged files produces
+ * an unchanged archive.
+ *
+ * Not what the freshness check relies on — that is `zipHoldsEntries`, which reads the CRCs
+ * the archive already stores and so is immune to both the clock and the zlib underneath.
+ * This is here so the artifact itself is reproducible: two builds of the same skill are the
+ * same file, which is worth having for anyone diffing or caching one. 1980 is the ZIP epoch,
+ * the one date the format stores exactly.
+ */
+const BUNDLE_EPOCH = new Date(Date.UTC(1980, 0, 1));
+
+/** Every file under a skill, as ZIP entries rooted at a folder named for the skill. */
+async function bundleEntries(source, name) {
+  const files = await listFiles(source);
+  const directories = new Set();
+
+  for (const file of files) {
+    const parts = file.split(/[/\\]/).slice(0, -1);
+    for (let depth = 1; depth <= parts.length; depth += 1) {
+      directories.add(`${name}/${parts.slice(0, depth).join("/")}`);
+    }
+  }
+
+  const entries = [{ path: name, directory: true }];
+  for (const directory of [...directories].sort()) {
+    entries.push({ path: directory, directory: true });
+  }
+  for (const file of files) {
+    entries.push({
+      // Always forward slashes. The archive is read on whatever machine the account is
+      // signed in on, not this one, and a backslash from a Windows build unpacks as a single
+      // file with slashes in its name rather than as a folder.
+      path: `${name}/${file.split(/[/\\]/).join("/")}`,
+      data: await readFile(join(source, file)),
+    });
+  }
+  return entries;
+}
+
+/**
+ * Build the `.zip` a host asks people to upload.
+ *
+ * Reports `unchanged` when the archive it would write is byte-for-byte the one already
+ * there, for the same reason the copying path does: rebuilding is how someone upgrades, and
+ * an install that claims to have produced something new every time gives no way to tell a
+ * real upgrade from a no-op.
+ */
+export async function buildSkillBundles(host, options = {}) {
+  const { dir = null, cwd = process.cwd(), dryRun = false } = options;
+  const destinationRoot = resolveSkillsRoot(host, { dir, cwd });
+  const skills = await readBundledSkills();
+  const results = [];
+
+  if (dryRun === false) {
+    await mkdir(destinationRoot, { recursive: true });
+  }
+
+  const runTimestamp = timestamp();
+  // Our own bundle directory holds build output and nothing else, so a file being replaced
+  // there is a bundle we wrote, regenerable from this same package. Anywhere else is a
+  // directory the person named, and a file we find there is not ours to overwrite without
+  // keeping a copy. Backing up either way would mean a new backup on every skill change,
+  // each one a stale copy of an artifact nobody wants back.
+  const ours = destinationRoot === host.userSkillsDir;
+
+  for (const skill of skills) {
+    const destination = join(destinationRoot, `${skill.name}.zip`);
+    const entries = await bundleEntries(skill.source, skill.name);
+
+    const existed = existsSync(destination);
+    let backup = null;
+
+    if (existed === true) {
+      const current = await readFile(destination).catch(() => null);
+      if (current !== null && zipHoldsEntries(current, entries) === true) {
+        results.push({ name: skill.name, destination, action: "unchanged", backup: null });
+        continue;
+      }
+      if (ours === false && dryRun === false) {
+        backup = join(backupsRoot(), runTimestamp, `${skill.name}.zip`);
+        await mkdir(dirname(backup), { recursive: true });
+        await rename(destination, backup);
+      }
+    }
+
+    const archive = createZip(entries, { modifiedAt: BUNDLE_EPOCH });
+    if (dryRun === false) {
+      await writeFile(destination, archive);
+    }
+
+    results.push({
+      name: skill.name,
+      destination,
+      action: existed === true ? "replaced" : "created",
+      backup,
+      bytes: archive.length,
+    });
+  }
+
+  return { host: host.id, destinationRoot, skills: results, dryRun };
+}
+
+/**
+ * Delete the bundles, which is the only part of a bundle install that is ours to undo.
+ *
+ * The uploaded copy lives in the person's Anthropic account and comes off through the same
+ * panel it went in by. Saying so is the caller's job; all this can do is stop leaving a
+ * stale archive around for someone to upload months later.
+ */
+export async function removeSkillBundles(host, options = {}) {
+  const { dir = null, cwd = process.cwd(), dryRun = false } = options;
+  const destinationRoot = resolveSkillsRoot(host, { dir, cwd });
+  const results = [];
+
+  for (const name of SKILL_NAMES) {
+    const destination = join(destinationRoot, `${name}.zip`);
+    if (existsSync(destination) === false) {
+      results.push({ name, destination, action: "absent" });
+      continue;
+    }
+    if (dryRun === false) {
+      await rm(destination, { force: true });
+    }
+    results.push({ name, destination, action: "removed" });
+  }
+
+  return { host: host.id, destinationRoot, skills: results, dryRun };
+}
+
+/**
+ * Whether a bundle is built and current, which is as much as can be known from here.
+ *
+ * Deliberately not called "installed". Whether the archive was ever uploaded, and whether
+ * the account still has it, are facts on the other side of a browser session — so this
+ * reports the artifact and leaves the rest to be asked of the app.
+ */
+export async function inspectSkillBundles(host, options = {}) {
+  const { dir = null, cwd = process.cwd() } = options;
+  const destinationRoot = resolveSkillsRoot(host, { dir, cwd });
+  const skills = await readBundledSkills();
+  const found = [];
+
+  for (const skill of skills) {
+    const destination = join(destinationRoot, `${skill.name}.zip`);
+    const current = existsSync(destination) === true ? await readFile(destination).catch(() => null) : null;
+
+    if (current === null) {
+      found.push({ name: skill.name, present: false, current: false, destination });
+      continue;
+    }
+
+    found.push({
+      name: skill.name,
+      present: true,
+      current: zipHoldsEntries(current, await bundleEntries(skill.source, skill.name)),
+      destination,
+    });
+  }
+
+  return { destinationRoot, skills: found };
 }
 
 /**

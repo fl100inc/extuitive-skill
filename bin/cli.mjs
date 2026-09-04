@@ -21,10 +21,13 @@ import {
 import { detectHosts, getHost, HOST_IDS } from "../src/hosts.mjs";
 import {
   backupsRoot,
+  buildSkillBundles,
   inspectInstalledSkills,
+  inspectSkillBundles,
   installSkills,
   otherSkillsInRoot,
   removeLegacyCopies,
+  removeSkillBundles,
   uninstallSkills,
 } from "../src/install.mjs";
 import {
@@ -48,8 +51,16 @@ Usage
   ${NPX_COMMAND} uninstall [options]
   ${NPX_COMMAND} doctor [options]
 
+Hosts
+  claude          The claude CLI, and the Code tab of the Claude Desktop app.
+  codex           The Codex CLI, the Codex desktop app, and the IDE extension,
+                  which share one config and one skills directory.
+  claude-desktop  The Chat and Cowork tabs of the Claude Desktop app. Skills there
+                  are uploaded to your account rather than copied to disk, so this
+                  builds a .zip and tells you where to add it.
+
 Options
-  --host <claude|codex|both>  Which host to set up. Required without a TTY.
+  --host <name|all>           Which host to set up. Required without a TTY.
   --scope <user|project>      Install for every project or just this one. Default: user.
   --dir <path>                Install into this directory instead of the host's default.
   --endpoint <url>            MCP endpoint. Default: ${DEFAULT_MCP_ENDPOINT}
@@ -130,8 +141,11 @@ function validate(options) {
   if (["user", "project"].includes(options.scope) === false) {
     throw new Error(`--scope must be user or project, got: ${options.scope}`);
   }
-  if (options.host !== null && [...HOST_IDS, "both"].includes(options.host) === false) {
-    throw new Error(`--host must be claude, codex, or both, got: ${options.host}`);
+  // `both` predates there being three hosts. Kept working rather than rejected, because it
+  // is in the README, in shell history, and in whatever notes people wrote down — and it
+  // has only ever meant "all of them".
+  if (options.host !== null && [...HOST_IDS, "all", "both"].includes(options.host) === false) {
+    throw new Error(`--host must be one of ${HOST_IDS.join(", ")}, or all — got: ${options.host}`);
   }
   try {
     new URL(options.endpoint);
@@ -148,7 +162,7 @@ function heading(text) {
 }
 
 function resolveHostIds(options, detections) {
-  if (options.host === "both") {
+  if (options.host === "all" || options.host === "both") {
     return [...HOST_IDS];
   }
   if (options.host !== null) {
@@ -157,6 +171,15 @@ function resolveHostIds(options, detections) {
   return detections.filter((detection) => detection.installed === true).map((d) => d.host.id);
 }
 
+/**
+ * Which hosts to set up, asked rather than assumed.
+ *
+ * Every option carries what it covers, because two of the three overlap on one machine: the
+ * Claude Desktop app appears twice, once as its Code tab under Claude Code and once as its
+ * Chat and Cowork tabs. Someone shown a bare "Claude Code / Claude Desktop" pair has no way
+ * to know that, and picking one when they needed both is the mistake this list exists to
+ * prevent.
+ */
 async function promptForHosts(detections) {
   const installed = detections.filter((detection) => detection.installed === true);
 
@@ -164,17 +187,20 @@ async function promptForHosts(detections) {
     return [];
   }
   if (installed.length === 1) {
-    console.log(`Found ${installed[0].host.label}.`);
+    console.log(`Found ${installed[0].host.label} — ${installed[0].host.surfaces}.`);
     return [installed[0].host.id];
   }
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
-    const labels = installed.map((detection, index) => `  ${index + 1}) ${detection.host.label}`);
+    const labels = installed.map(
+      (detection, index) =>
+        `  ${index + 1}) ${detection.host.label} — ${detection.host.surfaces}`,
+    );
     console.log("Found more than one host:");
     console.log(labels.join("\n"));
-    console.log(`  ${installed.length + 1}) Both`);
-    const answer = (await rl.question("Install into which? [both] ")).trim();
+    console.log(`  ${installed.length + 1}) All of them`);
+    const answer = (await rl.question("Install into which? [all] ")).trim();
 
     if (answer === "" || answer === String(installed.length + 1)) {
       return installed.map((detection) => detection.host.id);
@@ -199,13 +225,71 @@ async function confirm(question) {
   }
 }
 
-function printManualSteps(host, options) {
-  console.log(`\n  Finish setting up ${host.label} by hand:`);
+/**
+ * The remaining steps, numbered.
+ *
+ * `lead` is a parameter because the same list arrives two ways. For a CLI host it is a
+ * fallback after something went wrong, and "finish this by hand" is the right frame. For
+ * Claude Desktop it is the entire supported route, and that frame would read as a failure
+ * of an install that worked exactly as designed.
+ */
+function printManualSteps(host, options, lead = `Finish setting up ${host.label} by hand:`) {
+  console.log(`\n  ${lead}`);
   for (const [index, step] of manualSteps(host, options).entries()) {
     console.log(`\n  ${index + 1}. ${step.title}`);
     for (const line of step.body.split("\n")) {
       console.log(`       ${line}`);
     }
+  }
+}
+
+/** A bundle size, in the units a person reads a download in. */
+function describeSize(bytes) {
+  if (typeof bytes !== "number") {
+    return "";
+  }
+  return bytes < 1024 ? ` (${bytes} B)` : ` (${Math.round(bytes / 102.4) / 10} KB)`;
+}
+
+/**
+ * Put the skill where the host will find it, whichever of the two things that means.
+ *
+ * The returned `bundle` is the archive to be uploaded, or null for a host that reads a
+ * directory. Callers use its presence rather than the host id to decide what to print.
+ */
+async function placeSkills(host, options) {
+  if (host.skillDelivery === "bundle") {
+    const result = await buildSkillBundles(host, {
+      dir: options.dir,
+      dryRun: options.dryRun,
+    });
+    return { ...result, bundle: result.skills[0]?.destination ?? null };
+  }
+
+  const result = await installSkills(host, {
+    scope: options.scope,
+    dir: options.dir,
+    dryRun: options.dryRun,
+  });
+  return { ...result, bundle: null };
+}
+
+/** What the skill files landed as, in one line per skill. */
+function printPlacement(host, result, options) {
+  // Said rather than passed over. A flag that was accepted and then had no effect is the
+  // kind of thing someone finds out about weeks later, by wondering why a skill they scoped
+  // to one project is available in all of them.
+  if (options.scope === "project" && host.supportsScope === false) {
+    console.log(`  Ignoring --scope project: a ${host.label} skill belongs to your account,`);
+    console.log("  not to a directory, so there is no per-project install to make.");
+  }
+
+  const label = host.skillDelivery === "bundle" ? "Bundle" : "Skills";
+  console.log(`  ${label} → ${result.destinationRoot}`);
+  for (const skill of result.skills) {
+    const name = host.skillDelivery === "bundle" ? `${skill.name}.zip` : skill.name;
+    const note = skill.backup === null ? "" : ` (previous copy kept at ${skill.backup})`;
+    console.log(`${BULLET} ${name} ${skill.action}${describeSize(skill.bytes)}${note}`);
   }
 }
 
@@ -225,7 +309,7 @@ async function commandInstall(options) {
   }
 
   if (hostIds.length === 0) {
-    console.log("Could not find Claude Code or Codex CLI on this machine.");
+    console.log("Could not find Claude Code, Codex, or Claude Desktop on this machine.");
     console.log(`Install one, then run: ${NPX_COMMAND} install`);
     return 1;
   }
@@ -237,19 +321,10 @@ async function commandInstall(options) {
   for (const hostId of hostIds) {
     const host = getHost(hostId);
     const detection = detections.find((candidate) => candidate.host.id === hostId);
-    heading(host.label);
+    heading(`${host.label} — ${host.surfaces}`);
 
-    const result = await installSkills(host, {
-      scope: options.scope,
-      dir: options.dir,
-      dryRun: options.dryRun,
-    });
-
-    console.log(`  Skills → ${result.destinationRoot}`);
-    for (const skill of result.skills) {
-      const note = skill.backup === null ? "" : ` (previous copy kept at ${skill.backup})`;
-      console.log(`${BULLET} ${skill.name} ${skill.action}${note}`);
-    }
+    const result = await placeSkills(host, options);
+    printPlacement(host, result, options);
 
     const flag = await readFeatureFlag(host);
     let featureFlagEnabled = flag.required === false || flag.enabled === true;
@@ -283,19 +358,34 @@ async function commandInstall(options) {
       cliAvailable: detection?.cliAvailable ?? false,
     });
 
+    const manualOptions = {
+      endpoint: options.endpoint,
+      scope: options.scope,
+      featureFlagEnabled,
+      bundle: result.bundle,
+    };
+
     if (registration.status === "registered") {
       console.log(`${BULLET} Registered the MCP server (${registration.command})`);
     } else if (registration.status === "already_registered") {
       console.log(`${BULLET} MCP server already registered`);
     } else if (registration.status === "skipped_dry_run") {
       console.log(`${BULLET} Would run: ${registration.command}`);
+    } else if (registration.status === "manual_only") {
+      // Not a fallback. This host has no CLI and no config file we may write, so the panel
+      // is the install — and the sign-in, and the restart notice, all of which `manualSteps`
+      // already orders correctly. Saying why keeps it from reading as a refusal.
+      console.log(`${BULLET} ${host.label} has no CLI, and its skills live in your Anthropic`);
+      console.log("     account rather than on this machine, so the rest is done in the app.");
+      printManualSteps(host, manualOptions, `Do the rest in ${host.label}:`);
+      continue;
     } else if (registration.status === "cli_missing") {
       console.log(`${BULLET} ${host.cli} is not on PATH, so the server was not registered.`);
-      printManualSteps(host, { endpoint: options.endpoint, scope: options.scope, featureFlagEnabled });
+      printManualSteps(host, manualOptions);
       continue;
     } else {
       console.log(`${BULLET} Could not register the MCP server: ${registration.detail}`);
-      printManualSteps(host, { endpoint: options.endpoint, scope: options.scope, featureFlagEnabled });
+      printManualSteps(host, manualOptions);
       continue;
     }
 
@@ -304,7 +394,8 @@ async function commandInstall(options) {
     // order wrong is the failure people report as a broken install.
     const auth = authInstructions(host);
     const printRestart = () => {
-      console.log(`\n  ${auth.inSession === true ? "Next" : "Then"}, start a new ${host.label} session.`);
+      const when = auth.inSession === true ? "Next" : "Then";
+      console.log(`\n  ${when}, start a new ${host.label} ${host.sessionNoun}.`);
       console.log(`  ${restartNotice(host)}`);
     };
     const printSignIn = () => {
@@ -328,7 +419,11 @@ async function commandInstall(options) {
     // wrong one is indistinguishable from a failed install: Codex answers a `/` it does
     // not know with "Unrecognized command".
     console.log(`\n  Invoke it in ${host.label} with:`);
-    console.log(`    ${host.invocationPrefix}extuitive ${SKILL_COMMANDS[0]}`);
+    console.log(
+      host.invocationNote === null
+        ? `    ${host.invocationPrefix}extuitive ${SKILL_COMMANDS[0]}`
+        : `    ${host.invocationNote}`,
+    );
   }
 
   console.log("\nNo Extuitive account yet? The sign-in page has a Sign up button —");
@@ -351,10 +446,15 @@ async function resolveUpdateTargets(options, detections) {
 
   const targets = [];
   for (const detection of detections.filter((candidate) => candidate.installed === true)) {
-    const inspection = await inspectInstalledSkills(detection.host, {
-      scope: options.scope,
-      dir: options.dir,
-    });
+    // For a bundle host "already installed" can only mean "a bundle was built here". The
+    // uploaded copy is in an account and cannot be seen from a shell, so a machine that
+    // built one and then had its bundle directory cleared drops out of update — which is
+    // the same conservative answer this gives a host whose skills were deleted by hand.
+    const inspection =
+      detection.host.skillDelivery === "bundle"
+        ? await inspectSkillBundles(detection.host, { dir: options.dir })
+        : await inspectInstalledSkills(detection.host, { scope: options.scope, dir: options.dir });
+
     if (inspection.skills.some((skill) => skill.present === true) === true) {
       targets.push(detection.host.id);
     }
@@ -392,18 +492,9 @@ async function commandUpdate(options) {
     const detection = detections.find((candidate) => candidate.host.id === hostId);
     heading(host.label);
 
-    const result = await installSkills(host, {
-      scope: options.scope,
-      dir: options.dir,
-      dryRun: options.dryRun,
-    });
-
+    const result = await placeSkills(host, options);
     const changed = result.skills.filter((skill) => skill.action !== "unchanged");
-    console.log(`  Skills → ${result.destinationRoot}`);
-    for (const skill of result.skills) {
-      const note = skill.backup === null ? "" : ` (previous copy kept at ${skill.backup})`;
-      console.log(`${BULLET} ${skill.name} ${skill.action}${note}`);
-    }
+    printPlacement(host, result, options);
 
     const flag = await readFeatureFlag(host);
     if (flag.required === true && flag.enabled === false) {
@@ -467,6 +558,10 @@ async function commandUpdate(options) {
       }
     } else if (server.state === "unknown") {
       console.log(`${BULLET} MCP server: ${server.detail}`);
+    } else if (server.state === "unverifiable") {
+      // Said as a fact about what can be seen, not as a status. The alternative wording —
+      // the "MCP server registered" line below — would be an assertion nothing here checked.
+      console.log(`${BULLET} Connector: ${server.detail}`);
     } else {
       console.log(`${BULLET} MCP server registered`);
     }
@@ -476,14 +571,27 @@ async function commandUpdate(options) {
       continue;
     }
 
+    if (options.dryRun === true) {
+      continue;
+    }
+
+    // A rebuilt bundle changes nothing until it is uploaded again, so this is the one host
+    // where a successful update still leaves the person with something to do. Restarting
+    // would not help and is not mentioned.
+    if (host.skillDelivery === "bundle" && changed.length > 0) {
+      console.log(`\n  Upload the new bundle to pick this up: ${result.bundle}`);
+      console.log(`  In ${host.label}: Customize > Skills. Uploading again replaces the old copy.`);
+      continue;
+    }
+
     // Only when something actually changed. A refresh that rewrote nothing gives nobody a
     // reason to restart — but a server registered just now is a reason even on Claude Code,
     // where skills alone would not have been.
     const restartNeeded =
       (host.loadsSkillsAtStartup === true && changed.length > 0) ||
       (host.loadsMcpAtStartup === true && registeredNow === true);
-    if (restartNeeded === true && options.dryRun === false) {
-      console.log(`\n  Start a new ${host.label} session to pick this up.`);
+    if (restartNeeded === true) {
+      console.log(`\n  Start a new ${host.label} ${host.sessionNoun} to pick this up.`);
       console.log(`  ${restartNotice(host)}`);
     }
   }
@@ -551,14 +659,13 @@ async function commandUninstall(options) {
     const detection = detections.find((candidate) => candidate.host.id === hostId);
     heading(host.label);
 
-    const result = await uninstallSkills(host, {
-      scope: options.scope,
-      dir: options.dir,
-      dryRun: options.dryRun,
-    });
+    const bundled = host.skillDelivery === "bundle";
+    const result = bundled === true
+      ? await removeSkillBundles(host, { dir: options.dir, dryRun: options.dryRun })
+      : await uninstallSkills(host, { scope: options.scope, dir: options.dir, dryRun: options.dryRun });
 
     for (const skill of result.skills) {
-      console.log(`${BULLET} ${skill.name} ${skill.action}`);
+      console.log(`${BULLET} ${bundled === true ? `${skill.name}.zip` : skill.name} ${skill.action}`);
     }
 
     // Codex scans its legacy directory too, so a copy left there survives the removal above
@@ -583,6 +690,11 @@ async function commandUninstall(options) {
         console.log(`${BULLET} MCP server was not registered`);
       } else if (removal.status === "skipped_dry_run") {
         console.log(`${BULLET} Would run: ${removal.command}`);
+      } else if (removal.status === "manual_only") {
+        console.log(`${BULLET} The connector is still there — removing it is a click, not a command:`);
+        for (const step of removal.steps) {
+          console.log(`     ${step}`);
+        }
       } else if (removal.status === "cli_missing") {
         console.log(`${BULLET} ${host.cli} is not on PATH, so the server is still registered.`);
         console.log(`     Remove it yourself: ${removal.command}`);
@@ -593,6 +705,15 @@ async function commandUninstall(options) {
     }
 
     await revertFeatureFlag(host, options, interactive);
+
+    // Deleting the bundle removed the archive, not the skill. The skill went to an account
+    // when it was uploaded and is still there, on every device signed into it — so an
+    // uninstall that stopped at the file would be describing a removal that did not happen.
+    if (bundled === true) {
+      console.log(`\n  The uploaded copy is in your Anthropic account, not on this machine.`);
+      console.log(`  Remove it in ${host.label}: Customize > Skills, open extuitive,`);
+      console.log("  then the ... menu and Delete.");
+    }
 
     // Said plainly because it is the one thing an uninstall cannot finish. The token lives
     // in the host's own credential store, which is not ours to read or clear, so claiming a
@@ -622,7 +743,8 @@ function describeProbe(probe) {
 }
 
 async function commandDoctor(options) {
-  const hostFilter = options.host === "both" || options.host === null ? null : [options.host];
+  const everyHost = options.host === "all" || options.host === "both" || options.host === null;
+  const hostFilter = everyHost === true ? null : [options.host];
   const report = await diagnose({
     hosts: hostFilter,
     scope: options.scope,
@@ -648,7 +770,7 @@ async function commandDoctor(options) {
   console.log(`  ${describeProbe(report.probe)}`);
 
   if (report.anyHostDetected === false) {
-    console.log("\nNo Claude Code or Codex CLI installation found.");
+    console.log("\nNo Claude Code, Codex, or Claude Desktop installation found.");
     console.log(`Install one, then run: ${NPX_COMMAND} install`);
     return 1;
   }
@@ -656,15 +778,22 @@ async function commandDoctor(options) {
   let blocking = 0;
 
   for (const entry of report.hosts) {
-    heading(entry.host.label);
-    console.log(`  Skills   ${entry.skillsRoot}`);
+    const bundled = entry.host.skillDelivery === "bundle";
+    heading(`${entry.host.label} — ${entry.host.surfaces}`);
+    console.log(`  ${(bundled === true ? "Bundle" : "Skills").padEnd(10)}${entry.skillsRoot}`);
 
     for (const skill of entry.inspection.skills) {
-      const mark = skill.present === true && skill.nameMatches === true ? "ok" : "--";
-      console.log(`${BULLET} [${mark}] ${skill.name}`);
+      // The two hosts fail differently and so are marked differently. A copied skill is
+      // wrong when its declared name and its directory disagree; a bundle is wrong when it
+      // was built from an older version of the skill than the one in this package.
+      const healthy =
+        skill.present === true && (bundled === true ? skill.current : skill.nameMatches) === true;
+      console.log(`${BULLET} [${healthy === true ? "ok" : "--"}] ${skill.name}`);
     }
 
-    console.log(`  Server   ${entry.server.state} — ${entry.server.detail}`);
+    console.log(
+      `  ${(bundled === true ? "Connector" : "Server").padEnd(10)}${entry.server.state} — ${entry.server.detail}`,
+    );
 
     const real = entry.problems.filter((problem) => problem.advisory !== true);
     const advisories = entry.problems.filter((problem) => problem.advisory === true);

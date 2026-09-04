@@ -7,8 +7,17 @@ Work through the obstacles in order. Each has to be true before the next can be.
 
 ## 1. Is this host connected to the Extuitive MCP server?
 
-If the Extuitive tools are not available in this session, the connection is not set up. Tell
-the person to run:
+If the Extuitive tools are not available in this session, the connection is not set up.
+
+**Some hosts have no command line at all.** If this one is a desktop app where you reached the
+person through a chat window rather than a terminal — Claude Desktop is the one to expect —
+then the connection is a panel they click through, and telling them to run something would
+send them looking for a terminal they may not have:
+
+> Settings, then Connectors, then Add custom connector, and paste
+> `https://go.extuitive.com/mcp` as the URL.
+
+Everywhere else, tell them to run:
 
 ```bash
 npx github:fl100inc/extuitive-skill doctor
@@ -19,7 +28,8 @@ has been completed, and it prints the exact next command for their host.
 
 **Do not invent setup commands.** They differ per host, they change between versions, and
 `doctor` reads the current ones. A stale command sends someone down a dead end that looks
-like the product is broken.
+like the product is broken. The connector URL above is the one exception, and only because
+it is a URL rather than a command — there is nothing about it to go stale but the address.
 
 Relay what `doctor` prints, in the order it prints it. Three things are worth saying plainly
 while they work through it:
@@ -32,8 +42,9 @@ while they work through it:
   that reads as a broken install. Print the step and stop.
 - **The tools will not appear in this session.** Hosts connect MCP servers when a session
   starts, so nothing registered while you have been running is visible to you, and on some
-  hosts skills are read once at startup too. Say so, and ask them to start a fresh session
-  before checking. Retrying the tools here will not make them exist.
+  hosts skills are read once at startup too. Say so, and ask them to start a fresh session —
+  a new chat, in a desktop app — before checking. Retrying the tools here will not make them
+  exist.
 
 ## 2. Do they have an account?
 

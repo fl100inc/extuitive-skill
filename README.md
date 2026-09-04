@@ -1,7 +1,7 @@
 # extuitive-skill
 
 An agent skill for [Extuitive](https://go.extuitive.com), plus an installer that connects
-Claude Code or Codex CLI to the Extuitive MCP server.
+Claude Code, Codex, or Claude Desktop to the Extuitive MCP server.
 
 An Extuitive workspace is one Facebook ads account. The skill lets an agent pick which account
 to work in, upload creative into it, track how that upload is going, and repair a Meta
@@ -13,9 +13,13 @@ Installed straight from this repository — there is no npm package:
 npx github:fl100inc/extuitive-skill install
 ```
 
-That copies the skill into your host's skills directory, registers the MCP server, and tells
-you how to sign in. Signing in happens in your browser; the installer never handles your
-credentials.
+That puts the skill where your host looks for it, connects the MCP server, and tells you how
+to sign in. Signing in happens in your browser; the installer never handles your credentials.
+
+What "puts" and "connects" mean depends on the host. For Claude Code and Codex it is a
+directory copy and a CLI command. For Claude Desktop, whose skills belong to your account
+rather than to this machine, it is a `.zip` to upload and a connector to add — the command
+builds the first and prints the steps for both.
 
 **You do not need an Extuitive account first.** The sign-in page has a **Sign up** button
 next to **Log in**, both using a one-time email code, so you can create the account in the
@@ -39,17 +43,19 @@ One skill, `extuitive`, which takes a command:
 | Host | Invoke | Browse |
 | --- | --- | --- |
 | Claude Code | `/extuitive init` | `/skills` |
-| Codex CLI | `$extuitive init` | `/skills` |
+| Codex | `$extuitive init` | `/skills` |
+| Claude Desktop | no prefix — just ask | Customize > Skills |
 
 Codex reserves `/` for its own built-in commands, so `/extuitive` there returns
-`Unrecognized command '/extuitive'` even when the skill is installed correctly.
+`Unrecognized command '/extuitive'` even when the skill is installed correctly. Claude Desktop
+has no invocation syntax at all; it matches your request against the skill's description.
 
 Arguments go after the command: `/extuitive upload ./creative` or
 `$extuitive upload-status <batch id>`. Claude Code substitutes them into the skill; Codex
 passes your wording through, which works because the command word is still sitting in the
 prompt the model reads.
 
-Both hosts take a skill's name from its directory, which is why there is one skill with
+The CLI hosts take a skill's name from its directory, which is why there is one skill with
 commands rather than five skills — `/extuitive-upload` would need a separate directory each
 time, and the command form reads better and keeps one description in front of the model.
 
@@ -57,6 +63,19 @@ You usually will not type any of it. Asking for the underlying thing — "upload
 Extuitive" — reaches the skill on its own.
 
 ## Install
+
+Three hosts, and one of them is two things. Worth reading the table before picking, because
+the Claude Desktop app appears twice and installing for one half of it does not reach the
+other:
+
+| `--host` | Covers | Skills live |
+| --- | --- | --- |
+| `claude` | The `claude` CLI, and the **Code tab** of the Claude Desktop app | `~/.claude/skills` |
+| `codex` | The Codex CLI, the Codex desktop app, and the IDE extension | `~/.agents/skills` |
+| `claude-desktop` | The **Chat and Cowork tabs** of the Claude Desktop app | your Anthropic account |
+
+With no `--host`, the installer detects what is on the machine and asks. `--host all` takes
+everything it can find. `--host both` still works and still means all of them.
 
 ### Claude Code
 
@@ -85,7 +104,7 @@ shell cannot receive.
 you ran the command in, while your skills are available everywhere. That combination works in
 one project and looks broken in the next.
 
-### Codex CLI
+### Codex
 
 ```bash
 npx github:fl100inc/extuitive-skill install --host codex --write-config
@@ -107,16 +126,66 @@ codex mcp add extuitive --url https://go.extuitive.com/mcp
 Then `codex mcp login extuitive` to sign in, and **restart Codex** — it reads skills once at
 startup, so new ones are invisible until you do.
 
+**This is one install for three programs.** The Codex desktop app, the CLI and the IDE
+extension share `~/.codex/config.toml` for MCP and all read user skills from
+`~/.agents/skills`, so there is nothing extra to do for the app. If you prefer clicking, the
+app has the same two things under Settings > MCP servers: **Add server**, choosing Streamable
+HTTP, and **Authenticate**.
+
 `--write-config` is what permits editing `~/.codex/config.toml`. Without it you are shown the
 two lines to add yourself. Either way the file is backed up before it is touched.
+
+### Claude Desktop
+
+```bash
+npx github:fl100inc/extuitive-skill install --host claude-desktop
+```
+
+Nothing is registered and nothing is copied into the app, because neither is possible here.
+What the command does is build the archive the app asks for:
+
+```
+# bundle → ~/.extuitive-skill/bundles/extuitive.zip
+```
+
+Then, in the app:
+
+1. **Settings > Capabilities** — turn on code execution and file creation. The Skills section
+   does not appear until you do.
+2. **Customize > Skills** — `+`, then Create skill, then Upload a skill, and choose the
+   `extuitive.zip` the command printed.
+3. **Settings > Connectors** — Add custom connector, and paste
+   `https://go.extuitive.com/mcp` as the URL.
+4. Approve access in the browser window that opens, then **start a new chat**.
+
+Two things are different here and both are the app's design rather than a limitation of this
+installer.
+
+**Skills go to your account, not to this machine.** Chat-tab skills run in Anthropic's code
+execution container, and the Customize panel uploads them to your account — which is why they
+then work on claude.ai and on your other devices, and why an uninstall here deletes the
+archive but not the skill. The Code tab is the exception: it reads `~/.claude/skills`, so
+`--host claude` is what serves it.
+
+**The connector cannot go in `claude_desktop_config.json`.** That file validates stdio servers
+only, and an entry carrying a `url` is worse than ignored — Claude Desktop rewrites the file
+on next launch with the whole `mcpServers` block removed, taking any servers you added by hand
+with it ([anthropics/claude-code#37286](https://github.com/anthropics/claude-code/issues/37286)).
+There is a way around it, wrapping the endpoint in an `npx mcp-remote` stdio bridge, and this
+installer deliberately does not: it puts a second OAuth implementation and a background Node
+process between the app and a server the app can talk to directly through Connectors.
+
+**Uploading from a Chat-tab conversation will not work the way it does in a terminal.** The
+container holds the skill but not your disk, so the skill hands you a browser upload link
+instead. Cowork and the Code tab can reach your files normally.
 
 ### Options
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--host <claude\|codex\|both>` | detected | Which host to set up. Required without a TTY. |
-| `--scope <user\|project>` | `user` | Every project, or only this one. |
-| `--dir <path>` | host default | Install skills somewhere else entirely. |
+| `--host <name\|all>` | detected | `claude`, `codex`, `claude-desktop`, or `all`. Required without a TTY. |
+| `--scope <user\|project>` | `user` | Every project, or only this one. Ignored by `claude-desktop`, where a skill belongs to an account rather than a directory. |
+| `--dir <path>` | host default | Install skills, or write the bundle, somewhere else entirely. |
 | `--endpoint <url>` | `https://go.extuitive.com/mcp` | Point at a different server. |
 | `--write-config` | off | Allow editing the host's config file. |
 | `--keep-server` | off | Uninstall only: leave the MCP server registered. |
@@ -135,11 +204,15 @@ and whoever holds the files sends the bytes to those URLs directly. No tool acce
 
 That single fact splits the behaviour in two:
 
-- **A host that can run shell commands** — Claude Code, Codex — uses the script bundled in
-  `skills/extuitive/scripts/upload.mjs` to do the transfer, then reports the outcome through
-  the tools.
+- **A host that can read your files** — Claude Code, Codex, Cowork — uses the script bundled
+  in `skills/extuitive/scripts/upload.mjs` to do the transfer, then reports the outcome
+  through the tools.
 - **A host that cannot** uses `create_browser_upload_link` and hands the person a link to
   upload from their browser.
+
+The test is reading your files, not running code. A Claude Desktop chat has code execution —
+skills require it — but the container it runs in holds the skill and not your disk, so it
+takes the second path.
 
 It also means a finished transfer is not an accepted file. Bytes landing in storage starts a
 check that can still reject the file, so `READY` — not "upload complete" — is the only status
@@ -211,11 +284,16 @@ Common causes, in the order they usually happen:
   checks this.
 - **A stale duplicate.** Codex still scans the legacy `~/.codex/skills` alongside
   `~/.agents/skills`, so an old copy can shadow a new one. `doctor` names any it finds.
-- **The install said it worked and the tools are not there.** Both hosts connect MCP servers
+- **The install said it worked and the tools are not there.** Every host connects MCP servers
   when a session starts, so a server registered from inside a running session — or by an
-  agent in one — is invisible to it. Start a new session before concluding anything.
+  agent in one — is invisible to it. Start a new session, or a new chat, before concluding
+  anything.
+- **Claude Desktop has the skill in one tab and not another.** Chat and Cowork read the copy
+  uploaded to your account; the Code tab reads `~/.claude/skills`. They are different
+  installs: `--host claude-desktop` and `--host claude` respectively.
 - **Tools are listed but every call is refused.** Sign-in was never completed. Run `/mcp` in
-  Claude Code, or `codex mcp login extuitive` in a terminal.
+  Claude Code, `codex mcp login extuitive` in a terminal, or click Connect next to `extuitive`
+  in Claude Desktop's Settings > Connectors.
 - **A `403` part-way through an upload.** Presigned URLs last 30 minutes and a whole batch is
   signed at once, so late files in a big batch can expire mid-transfer. The script reports
   these as `needsResign` and `needsPartResign`; the fix is `resign_upload` or
@@ -265,6 +343,10 @@ Removes the skill directories, deletes any stale copy in Codex's legacy `~/.code
 unregisters the MCP server from your host. Pass `--keep-server` to drop the skills but keep the
 tools registered.
 
+On Claude Desktop it deletes the built archive and prints the two removals it cannot do for
+you: the skill, in Customize > Skills, and the connector, in Settings > Connectors. Both live
+on the other side of a browser session.
+
 Two things are deliberately left behind.
 
 **Your backups**, under `~/.extuitive-skill/backups/`. Each one exists because an install found
@@ -287,7 +369,8 @@ skill it replaced would be loaded as a second, older copy of that skill.
 
 ```
 bin/cli.mjs                 install | update | uninstall | doctor
-src/                        host detection, install, MCP setup, doctor
+src/hosts.mjs               every per-host difference, as data
+src/                        install, MCP setup, doctor, and a ZIP writer
 skills/extuitive/
   SKILL.md                  routes a command to its reference
   references/               one file per command, plus the full tool reference
@@ -302,14 +385,22 @@ flows in the front page would spend context on four of them every time.
 not contain one — everything an agent reads belongs in `SKILL.md` or `references/`, and a
 `README.md` inside a skill folder is dead weight in its context window.
 
-Host-specific setup commands live only in `src/mcp-setup.mjs`. The skill never names them; it
-tells the agent to run `doctor` and relay what it prints, so a change to either host's CLI is
-a fix in one file rather than four.
+Host-specific setup commands live only in `src/mcp-setup.mjs`, and every other per-host
+difference is a field in `src/hosts.mjs`. Nothing else branches on a host id. Two of those
+fields decide which code path a host takes rather than which words it prints: `skillDelivery`
+(`copy` for a host that scans a directory, `bundle` for one that takes an upload) and
+`mcpSetup` (`cli` for a host we can drive, `connector-ui` for one where the only supported
+route is a panel).
+
+The skill never names a setup command; it tells the agent to run `doctor` and relay what it
+prints, so a change to a host's CLI is a fix in one file rather than four. The one exception
+is the connector URL, which the skill does name, because a host with no command line cannot
+be told to run `doctor` and a URL has nothing to go stale but its address.
 
 That file also decides the order of the last two steps. Sign-in and restart are printed in
 whichever order the host can actually do them: Claude Code signs in from inside a session, so
-it has to restart first, while Codex signs in from a terminal and restarts afterwards to pick
-up the skills. Anything printed here should assume its reader is an agent, which will run a
+it has to restart first, while Codex and Claude Desktop sign in outside one and restart
+afterwards to pick up the skills. Anything printed here should assume its reader is an agent, which will run a
 shell command it is shown — so a sign-in step that cannot survive being run that way does not
 belong in the output.
 

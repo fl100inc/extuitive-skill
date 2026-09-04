@@ -16,7 +16,13 @@
  */
 import { DEFAULT_MCP_ENDPOINT, MCP_SERVER_NAME, NPX_COMMAND } from "./constants.mjs";
 import { detectHosts } from "./hosts.mjs";
-import { backupsRoot, findLegacyCopies, findShadowingBackups, inspectInstalledSkills } from "./install.mjs";
+import {
+  backupsRoot,
+  findLegacyCopies,
+  findShadowingBackups,
+  inspectInstalledSkills,
+  inspectSkillBundles,
+} from "./install.mjs";
 import { authInstructions, readFeatureFlag, restartNotice, statusCommand } from "./mcp-setup.mjs";
 import { run } from "./exec.mjs";
 
@@ -110,11 +116,21 @@ function namesOurServer(line) {
  * read the status" must not be reported as "it is broken".
  */
 export function readHostServerStatus(host, { cliAvailable }) {
+  // Distinct from `unknown`, which means "we could not read it this time". This one will
+  // never be readable, so nothing about it is worth suggesting a fix for.
+  const status = statusCommand(host);
+  if (status === null) {
+    return {
+      state: "unverifiable",
+      detail: `${host.label} has no CLI, so its connectors can only be seen in Settings > Connectors.`,
+    };
+  }
+
   if (cliAvailable === false) {
     return { state: "unknown", detail: `${host.cli} is not on PATH.` };
   }
 
-  const { command, args } = statusCommand(host);
+  const { command, args } = status;
   const result = run(command, args, { timeoutMs: 20_000 });
 
   if (result.spawnError === true) {
@@ -164,13 +180,38 @@ function skillSummary(inspection) {
   return { state: "installed", missing, mismatched };
 }
 
+/**
+ * The same summary for a host whose skills are uploaded rather than copied.
+ *
+ * `built` rather than `installed`, and the difference is the point: an archive on this disk
+ * says the upload is possible, not that it happened. Whether the account has the skill is
+ * behind a browser session doctor cannot see, so it is never claimed either way.
+ */
+function bundleSummary(inspection) {
+  const missing = inspection.skills.filter((skill) => skill.present === false);
+  const stale = inspection.skills.filter(
+    (skill) => skill.present === true && skill.current === false,
+  );
+
+  if (missing.length === inspection.skills.length) {
+    return { state: "absent", missing, stale, mismatched: [] };
+  }
+  if (missing.length > 0 || stale.length > 0) {
+    return { state: "partial", missing, stale, mismatched: [] };
+  }
+  return { state: "built", missing, stale, mismatched: [] };
+}
+
 /** Everything doctor knows about one host. */
 export async function diagnoseHost(detection, options = {}) {
   const { scope = "user", dir = null, cwd = process.cwd() } = options;
   const { host, cliAvailable, configPresent } = detection;
 
-  const inspection = await inspectInstalledSkills(host, { scope, dir, cwd });
-  const skills = skillSummary(inspection);
+  const bundled = host.skillDelivery === "bundle";
+  const inspection = bundled === true
+    ? await inspectSkillBundles(host, { dir, cwd })
+    : await inspectInstalledSkills(host, { scope, dir, cwd });
+  const skills = bundled === true ? bundleSummary(inspection) : skillSummary(inspection);
   const featureFlag = await readFeatureFlag(host);
   const legacy = await findLegacyCopies(host);
   const shadowingBackups = await findShadowingBackups(host, { scope, dir, cwd });
@@ -180,7 +221,9 @@ export async function diagnoseHost(detection, options = {}) {
 
   if (skills.state === "absent") {
     problems.push({
-      what: `No Extuitive skills in ${inspection.destinationRoot}.`,
+      what: bundled === true
+        ? `No skill bundle built for ${host.label} in ${inspection.destinationRoot}.`
+        : `No Extuitive skills in ${inspection.destinationRoot}.`,
       fix: `Run: ${NPX_COMMAND} install`,
     });
   } else if (skills.state === "partial") {
@@ -190,12 +233,27 @@ export async function diagnoseHost(detection, options = {}) {
         fix: `Run: ${NPX_COMMAND} install`,
       });
     }
+    for (const skill of skills.stale ?? []) {
+      problems.push({
+        what: `${skill.destination} was built from an older copy of the skill.`,
+        fix: `Rebuild it, then upload the new one: ${NPX_COMMAND} update`,
+      });
+    }
     for (const skill of skills.mismatched) {
       problems.push({
         what: `${skill.destination} declares name "${skill.declaredName}" but sits in a directory named "${skill.name}". Hosts key a skill on its directory, so this one will not load.`,
         fix: `Reinstall to restore the bundled copy: ${NPX_COMMAND} install`,
       });
     }
+  } else if (bundled === true) {
+    // The one thing doctor genuinely cannot see, said plainly rather than left as a healthy
+    // tick that means less than it looks like. A built bundle is a file on this disk; the
+    // skill is in an account.
+    problems.push({
+      what: `The bundle is current, but whether it has been uploaded is only visible in ${host.label} under Customize > Skills.`,
+      fix: `Upload ${inspection.skills[0]?.destination ?? "the bundle"} there if extuitive is not already listed.`,
+      advisory: true,
+    });
   }
 
   if (featureFlag.required === true && featureFlag.enabled === false) {
@@ -247,16 +305,25 @@ export async function diagnoseHost(detection, options = {}) {
       what: `${host.label} could not connect to the server: ${server.detail}`,
       fix: "Check the endpoint is reachable, then sign in again.",
     });
+  } else if (server.state === "unverifiable") {
+    // Advisory, not a problem. Nothing is known to be wrong; the place to look is simply
+    // not a place a shell can reach, and reporting that as a failure would send someone
+    // reinstalling a connector that is already there.
+    problems.push({
+      what: `Whether ${host.label} has the extuitive connector cannot be read from a shell.`,
+      fix: "Check it yourself in Settings > Connectors.",
+      advisory: true,
+    });
   }
 
-  // Raised for both hosts, because the failure it explains is the same on both: everything
-  // below reads healthy and the session still has no Extuitive tools. Doctor cannot tell
-  // whether a restart has already happened — it runs in a shell, not in the session — so it
-  // says the fact and leaves the "if you have not" to the reader.
-  if (skills.state === "installed" && server.state !== "absent") {
+  // Raised for every host, because the failure it explains is the same everywhere:
+  // everything below reads healthy and the session still has no Extuitive tools. Doctor
+  // cannot tell whether a restart has already happened — it runs in a shell, not in the
+  // session — so it says the fact and leaves the "if you have not" to the reader.
+  if (["installed", "built"].includes(skills.state) === true && server.state !== "absent") {
     problems.push({
       what: restartNotice(host),
-      fix: `Start a new ${host.label} session if you have not since installing.`,
+      fix: `Start a new ${host.label} ${host.sessionNoun} if you have not since installing.`,
       advisory: true,
     });
   }
