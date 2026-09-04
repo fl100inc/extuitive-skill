@@ -1,7 +1,7 @@
 {
   "name": "extuitive-skill",
   "version": "0.1.0",
-  "description": "Install the Extuitive agent skills into Claude Code, Codex, or Claude Desktop and connect them to the Extuitive MCP server.",
+  "description": "Install the Extuitive agent skill into Claude Code, Codex, or Claude Desktop and connect it to the Extuitive MCP server.",
   "type": "module",
   "license": "MIT",
   "repository": {

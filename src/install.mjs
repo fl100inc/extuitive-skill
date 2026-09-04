@@ -17,7 +17,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { SKILL_NAMES } from "./constants.mjs";
-import { resolveSkillsRoot, stateRoot } from "./hosts.mjs";
+import { previousSkillsRoots, resolveSkillsRoot, stateRoot } from "./hosts.mjs";
 import { createZip, zipHoldsEntries } from "./zip.mjs";
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -160,14 +160,22 @@ export async function readBundledSkills() {
 }
 
 /**
- * Copy every skill into one host.
+ * Copy every skill into one host, and move any copy out of where we used to put it.
  *
  * Idempotent in the sense that matters: running it twice leaves the same result, and the
  * second run reports `replaced` rather than pretending nothing was there.
+ *
+ * Migration is the second half and runs only after the first has succeeded. The order is the
+ * safety: the new copy is written and verified against the bundled source *before* the old
+ * one is touched, so a failure part-way leaves two working copies rather than none. An old
+ * copy that differs from what we ship is moved to the backups directory, not deleted — it
+ * may have been edited by hand — and one that matches is simply removed. Codex scans both
+ * roots, so leaving the old copy would show the skill twice in the picker.
  */
 export async function installSkills(host, options = {}) {
   const { scope = "user", dir = null, cwd = process.cwd(), dryRun = false } = options;
   const destinationRoot = resolveSkillsRoot(host, { scope, dir, cwd });
+  const previousRoots = previousSkillsRoots(host, { scope, dir });
   const skills = await readBundledSkills();
   const results = [];
 
@@ -181,27 +189,65 @@ export async function installSkills(host, options = {}) {
     const destination = join(destinationRoot, skill.name);
     const existed = existsSync(destination);
     let backup = null;
+    let action;
 
     if (existed === true && (await treesMatch(destination, skill.source)) === true) {
-      results.push({ name: skill.name, destination, action: "unchanged", backup: null });
-      continue;
+      action = "unchanged";
+    } else {
+      if (existed === true && dryRun === false) {
+        backup = join(backupsRoot(), runTimestamp, skill.name);
+        await mkdir(dirname(backup), { recursive: true });
+        await rename(destination, backup);
+      }
+      if (dryRun === false) {
+        await cp(skill.source, destination, { recursive: true });
+      }
+      action = existed === true ? "replaced" : "created";
     }
 
-    if (existed === true && dryRun === false) {
-      backup = join(backupsRoot(), runTimestamp, skill.name);
-      await mkdir(dirname(backup), { recursive: true });
-      await rename(destination, backup);
-    }
+    // Verified against the source rather than trusted: `cp` reporting success and the tree
+    // being what we meant to write are different facts, and the old copy is only removed on
+    // the strength of the second.
+    const verified = dryRun === true || (await treesMatch(destination, skill.source)) === true;
+    const migrated = [];
 
-    if (dryRun === false) {
-      await cp(skill.source, destination, { recursive: true });
+    for (const root of previousRoots) {
+      const previous = join(root, skill.name);
+      if (existsSync(join(previous, "SKILL.md")) === false) {
+        continue;
+      }
+      if (verified === false) {
+        migrated.push({ from: previous, action: "left", backup: null });
+        continue;
+      }
+
+      const identical = await treesMatch(previous, skill.source);
+      let previousBackup = null;
+
+      if (dryRun === false) {
+        if (identical === true) {
+          await rm(previous, { recursive: true, force: true });
+        } else {
+          previousBackup = join(backupsRoot(), runTimestamp, "previous-location", skill.name);
+          await mkdir(dirname(previousBackup), { recursive: true });
+          await rename(previous, previousBackup);
+        }
+      }
+      migrated.push({
+        from: previous,
+        action: identical === true ? "removed" : "backed_up",
+        backup: previousBackup,
+      });
     }
 
     results.push({
       name: skill.name,
       destination,
-      action: existed === true ? "replaced" : "created",
+      skillFile: join(destination, "SKILL.md"),
+      action,
       backup,
+      verified,
+      migrated,
     });
   }
 
@@ -395,57 +441,18 @@ export async function uninstallSkills(host, options = {}) {
     results.push({ name, destination, action: "removed" });
   }
 
-  return { host: host.id, destinationRoot, skills: results, dryRun };
-}
-
-/**
- * Delete our skills from Codex's legacy `~/.codex/skills`.
- *
- * `findLegacyCopies` has always been able to name these, but only `doctor` used it, so an
- * uninstall that cleaned the current location left a still-loadable copy in the old one —
- * the skill would keep appearing after being removed. Only directories matching our own
- * skill names are touched; anything else in there belongs to someone else.
- */
-export async function removeLegacyCopies(host, { dryRun = false } = {}) {
-  const copies = await findLegacyCopies(host);
-
-  for (const copy of copies) {
+  // A copy left in the previous location would survive the removal above and keep loading
+  // — the skill would appear to come back. Only directories matching our own skill names
+  // are touched; anything else in there belongs to someone else.
+  const previous = await findPreviousCopies(host, { scope, dir });
+  for (const copy of previous) {
     if (dryRun === false) {
       await rm(copy.path, { recursive: true, force: true });
     }
+    results.push({ name: copy.name, destination: copy.path, action: "removed", previousLocation: true });
   }
 
-  return copies;
-}
-
-/**
- * Skills in a host's skills root that are not ours.
- *
- * Uninstall needs this before it touches Codex's feature flag: the flag governs every skill
- * Codex loads, so turning it off to tidy up after ourselves would quietly disable skills the
- * user wrote. Backup directories are excluded — they are not skills anyone is choosing to
- * keep loadable, and `doctor` already reports them as a problem in their own right.
- */
-export async function otherSkillsInRoot(host, options = {}) {
-  const { scope = "user", dir = null, cwd = process.cwd() } = options;
-  const root = resolveSkillsRoot(host, { scope, dir, cwd });
-
-  let entries;
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  return entries
-    .filter(
-      (entry) =>
-        entry.isDirectory() === true &&
-        SKILL_NAMES.includes(entry.name) === false &&
-        /\.backup-/.test(entry.name) === false &&
-        existsSync(join(root, entry.name, "SKILL.md")) === true,
-    )
-    .map((entry) => entry.name);
+  return { host: host.id, destinationRoot, skills: results, dryRun };
 }
 
 /** Which of our skills are present in a host's skills root, for `doctor`. */
@@ -459,7 +466,7 @@ export async function inspectInstalledSkills(host, options = {}) {
     const skillFile = join(destination, "SKILL.md");
 
     if (existsSync(skillFile) === false) {
-      found.push({ name, present: false, destination, nameMatches: false });
+      found.push({ name, present: false, destination, skillFile, nameMatches: false });
       continue;
     }
 
@@ -468,12 +475,17 @@ export async function inspectInstalledSkills(host, options = {}) {
       name,
       present: true,
       destination,
+      skillFile,
       nameMatches: declaredName === name,
       declaredName,
     });
   }
 
-  return { destinationRoot, skills: found };
+  return {
+    destinationRoot,
+    skills: found,
+    previous: await findPreviousCopies(host, { scope, dir }),
+  };
 }
 
 /**
@@ -506,22 +518,24 @@ export async function findShadowingBackups(host, options = {}) {
 }
 
 /**
- * A stale copy in Codex's legacy `~/.codex/skills` alongside a current one in
- * `~/.agents/skills`. Both are scanned, so the duplicate shows up twice in the picker and
- * the older body can be the one that gets read.
+ * Our skills sitting where an earlier version of this installer put them.
+ *
+ * On Codex that is `~/.agents/skills`, which Codex still scans alongside the current default,
+ * so a copy there loads fine on its own — and shows up as a duplicate the moment a current
+ * install exists too. Install migrates these; doctor names them; uninstall removes them.
  */
-export async function findLegacyCopies(host) {
-  if (host.legacyUserSkillsDir === null) {
-    return [];
-  }
+export async function findPreviousCopies(host, options = {}) {
+  const { scope = "user", dir = null } = options;
+  const found = [];
 
-  const stale = [];
-  for (const name of SKILL_NAMES) {
-    const candidate = join(host.legacyUserSkillsDir, name);
-    if (existsSync(join(candidate, "SKILL.md")) === true) {
-      const info = await stat(candidate);
-      stale.push({ name, path: candidate, modifiedAt: info.mtime.toISOString() });
+  for (const root of previousSkillsRoots(host, { scope, dir })) {
+    for (const name of SKILL_NAMES) {
+      const candidate = join(root, name);
+      if (existsSync(join(candidate, "SKILL.md")) === true) {
+        const info = await stat(candidate);
+        found.push({ name, path: candidate, root, modifiedAt: info.mtime.toISOString() });
+      }
     }
   }
-  return stale;
+  return found;
 }

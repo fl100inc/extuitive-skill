@@ -13,22 +13,18 @@
  * config file. The file formats differ (JSON for Claude Code, TOML for Codex), both have
  * changed shape across versions, and a hand-written entry that a newer host rejects is
  * harder to diagnose than a command that failed loudly. Hand-editing is the fallback only
- * when the CLI is absent, and then it is printed for the user rather than applied.
+ * when the CLI is absent or broken, and then it is printed for the user rather than applied.
+ *
+ * Commands spawn `host.cliCommand`, which is whichever binary `resolveCli` found working —
+ * possibly the one inside the desktop app bundle — and print the same, so a step someone is
+ * told to run is the step that will actually run.
  *
  * Claude Desktop has neither a CLI nor a config file we may write, so everything below
  * takes a second path for it, chosen by `mcpSetup` rather than by host id. See
  * `connectorSteps` for why its config file is left alone even as a fallback.
  */
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { dirname } from "node:path";
-
 import { DEFAULT_MCP_ENDPOINT, MCP_SERVER_NAME, NPX_COMMAND } from "./constants.mjs";
 import { formatCommand, run } from "./exec.mjs";
-
-function timestamp() {
-  return new Date().toISOString().replace(/[:.]/g, "-");
-}
 
 /**
  * The command that registers the server.
@@ -50,12 +46,12 @@ export function registerCommand(host, { endpoint = DEFAULT_MCP_ENDPOINT, scope =
     } else {
       args.push("--scope", "user");
     }
-    return { command: host.cli, args };
+    return { command: host.cliCommand, args };
   }
 
   if (host.id === "codex") {
     return {
-      command: host.cli,
+      command: host.cliCommand,
       args: ["mcp", "add", MCP_SERVER_NAME, "--url", endpoint],
     };
   }
@@ -78,13 +74,13 @@ export function unregisterCommand(host, { scope = "user" } = {}) {
 
   if (host.id === "claude") {
     return {
-      command: host.cli,
+      command: host.cliCommand,
       args: ["mcp", "remove", MCP_SERVER_NAME, "--scope", scope === "project" ? "project" : "user"],
     };
   }
 
   if (host.id === "codex") {
-    return { command: host.cli, args: ["mcp", "remove", MCP_SERVER_NAME] };
+    return { command: host.cliCommand, args: ["mcp", "remove", MCP_SERVER_NAME] };
   }
 
   throw new Error(`Unknown host: ${host.id}`);
@@ -148,7 +144,7 @@ export function authInstructions(host) {
       // Authenticate — but the command is what gets printed, because it works from every
       // Codex surface including the app, and because one instruction that always applies
       // beats two that each apply sometimes.
-      primary: formatCommand(host.cli, ["mcp", "login", MCP_SERVER_NAME]),
+      primary: formatCommand(host.cliCommand, ["mcp", "login", MCP_SERVER_NAME]),
       alternative: "In the Codex desktop app: Settings > MCP servers > Authenticate.",
       inSession: false,
     };
@@ -170,14 +166,39 @@ export function authInstructions(host) {
 }
 
 /**
- * Why nothing is visible yet, in the host's own terms.
+ * When the skill itself becomes usable, in the host's own terms.
+ *
+ * Every host now picks up new skills without a restart — Codex between turns, Claude Code as
+ * files change, Claude Desktop when a chat starts — so this is one sentence and not an
+ * instruction. It exists as a function because it is the sentence an installing agent will
+ * repeat to the person, and it must not drift from what the host does: telling someone to
+ * restart for a skill that is already live is how they learn to ignore the rest of the
+ * output.
+ */
+export function skillAvailabilityNotice(host) {
+  if (host.skillDelivery === "bundle") {
+    // Nothing is live yet. The archive is on disk and the skill reaches the account only
+    // once someone uploads it, so the sentence names the upload rather than a wait.
+    return `Once uploaded, the skill is available in new ${host.sessionNoun}s.`;
+  }
+  if (host.loadsSkillsAtStartup === true) {
+    return `${host.label} reads skills once at startup, so the skill appears after you start a new ${host.sessionNoun}.`;
+  }
+  if (host.id === "codex") {
+    return "The skill is available on your next turn.";
+  }
+  return "The skill is available now.";
+}
+
+/**
+ * When the MCP server — and so the Extuitive tools — becomes usable.
  *
  * Stated as its own sentence everywhere it appears because it is the step people skip and
  * then report as a broken install: the server is registered, the endpoint is fine, `mcp list`
  * agrees, and the session still has no Extuitive tools. On Claude Code it also gates sign-in,
  * so it has to be said before the sign-in step rather than after it.
  */
-export function restartNotice(host) {
+export function serverAvailabilityNotice(host) {
   if (host.id === "claude-desktop") {
     // No application restart: a connector and an uploaded skill are both live as soon as
     // they land. The chat is the thing with the stale view, and saying "restart Claude
@@ -185,10 +206,10 @@ export function restartNotice(host) {
     // back in the same conversation.
     return `${host.label} gives a chat its tools and skills when the chat starts, so neither appears in a conversation that was already open — start a new chat.`;
   }
-  if (host.loadsSkillsAtStartup === true) {
-    return `${host.label} reads MCP servers and skills once at startup, so neither is visible until you restart it.`;
+  if (host.id === "claude") {
+    return `${host.label} connects MCP servers when a session starts, so extuitive is not in the session you ran this from — and /mcp cannot sign in to a server that session never connected to.`;
   }
-  return `${host.label} connects MCP servers when a session starts, so extuitive is not in the session you ran this from — and /mcp cannot sign in to a server that session never connected to.`;
+  return `${host.label} connects MCP servers when a session starts, so the Extuitive tools appear in a new session once you have signed in.`;
 }
 
 /**
@@ -202,11 +223,11 @@ export function statusCommand(host) {
   if (host.mcpSetup !== "cli") {
     return null;
   }
-  return { command: host.cli, args: ["mcp", "list"] };
+  return { command: host.cliCommand, args: ["mcp", "list"] };
 }
 
 /**
- * What to paste when the host CLI is not on PATH and we will not guess at its config.
+ * What to paste when the host CLI cannot be run and we will not guess at its config.
  *
  * `null` for a connector-UI host. Not because there is no file — there is one, right where
  * you would expect — but because writing a remote server into it makes Claude Desktop
@@ -247,6 +268,10 @@ export function manualConfigSnippet(host, { endpoint = DEFAULT_MCP_ENDPOINT } = 
  * A failure here is reported, not thrown. Skills are already on disk by this point and are
  * useful the moment the server is registered by any means, so aborting the whole install
  * over a CLI that refused would leave a worse state than finishing and printing the step.
+ *
+ * `cli_missing` and `cli_broken` are different statuses because they have different fixes:
+ * one person has to install the CLI, the other has one that does not run and should be told
+ * which file it is.
  */
 export async function registerMcpServer(host, options = {}) {
   const { endpoint = DEFAULT_MCP_ENDPOINT, scope = "user", dryRun = false, cliAvailable } = options;
@@ -263,8 +288,9 @@ export async function registerMcpServer(host, options = {}) {
 
   if (cliAvailable === false) {
     return {
-      status: "cli_missing",
+      status: host.cliResolution.state === "broken" ? "cli_broken" : "cli_missing",
       command: rendered,
+      detail: host.cliResolution.detail,
       manual: manualConfigSnippet(host, { endpoint }),
     };
   }
@@ -330,7 +356,11 @@ export async function unregisterMcpServer(host, options = {}) {
   const rendered = formatCommand(command, args);
 
   if (cliAvailable === false) {
-    return { status: "cli_missing", command: rendered };
+    return {
+      status: host.cliResolution.state === "broken" ? "cli_broken" : "cli_missing",
+      command: rendered,
+      detail: host.cliResolution.detail,
+    };
   }
 
   if (dryRun === true) {
@@ -374,150 +404,6 @@ export async function unregisterMcpServer(host, options = {}) {
 }
 
 /**
- * The flag line, matched without ever crossing a line break.
- *
- * `[^\S\n]` rather than `\s` is load-bearing. `\s` matches newlines, and since the bounds are
- * greedy an `\s*$` at the end consumes the terminating newline as part of the match — so
- * rewriting the value would delete the line break with it and produce
- * `[features]skills = false`, which is not valid TOML. Horizontal whitespace only keeps the
- * match inside its own line and lets `$` sit before the newline instead of after it.
- */
-const FEATURE_FLAG_PATTERN = /^[^\S\n]*skills[^\S\n]*=[^\S\n]*(true|false)[^\S\n]*$/m;
-
-/**
- * Whether Codex's experimental skills flag is on.
- *
- * Absent and `false` are reported separately because they need different words: one is
- * "this was never enabled", the other is "somebody turned it off", and telling the second
- * person to add a line they already have is a dead end.
- */
-export async function readFeatureFlag(host) {
-  if (host.featureFlag === null) {
-    return { required: false, enabled: true, path: null };
-  }
-
-  const path = host.featureFlag.file;
-  if (existsSync(path) === false) {
-    return { required: true, enabled: false, present: false, path };
-  }
-
-  const contents = await readFile(path, "utf8");
-  const section = /^\s*\[features\]\s*$/m.exec(contents);
-  if (section === null) {
-    return { required: true, enabled: false, present: false, path };
-  }
-
-  const after = contents.slice(section.index + section[0].length);
-  const nextSection = /^\s*\[/m.exec(after);
-  const body = nextSection === null ? after : after.slice(0, nextSection.index);
-  const match = FEATURE_FLAG_PATTERN.exec(body);
-
-  if (match === null) {
-    return { required: true, enabled: false, present: false, path };
-  }
-  return { required: true, enabled: match[1] === "true", present: true, path };
-}
-
-/**
- * Turn the flag on, but only when explicitly allowed.
- *
- * This edits a file the user owns and did not ask us to touch, in a format where a clumsy
- * write can break unrelated settings, so it is gated behind `--write-config` and always
- * takes a timestamped backup first. An existing `skills = false` is rewritten in place
- * rather than duplicated, since a second key in the same table is a TOML error.
- */
-export async function enableFeatureFlag(host, { dryRun = false } = {}) {
-  const state = await readFeatureFlag(host);
-  if (state.required === false || state.enabled === true) {
-    return { status: "not_needed", path: state.path };
-  }
-
-  const path = state.path;
-  if (dryRun === true) {
-    return { status: "skipped_dry_run", path };
-  }
-
-  await mkdir(dirname(path), { recursive: true });
-
-  let backup = null;
-  let contents = "";
-  if (existsSync(path) === true) {
-    contents = await readFile(path, "utf8");
-    backup = `${path}.backup-${timestamp()}`;
-    await copyFile(path, backup);
-  }
-
-  const sectionHeader = /^\s*\[features\]\s*$/m.exec(contents);
-
-  if (sectionHeader === null) {
-    const separator = contents === "" || contents.endsWith("\n") === true ? "" : "\n";
-    contents = `${contents}${separator}\n[features]\nskills = true\n`;
-  } else if (FEATURE_FLAG_PATTERN.test(contents) === true) {
-    contents = contents.replace(FEATURE_FLAG_PATTERN, "skills = true");
-  } else {
-    const insertAt = sectionHeader.index + sectionHeader[0].length;
-    contents = `${contents.slice(0, insertAt)}\nskills = true${contents.slice(insertAt)}`;
-  }
-
-  await writeFile(path, contents, "utf8");
-  return { status: "enabled", path, backup };
-}
-
-/**
- * Turn the flag back off.
- *
- * Rewrites the value in place rather than deleting the key or the `[features]` table it sits
- * in. This is a file the user owns, TOML, and possibly holding settings that have nothing to
- * do with us; a one-line value change is the smallest edit that undoes what install did, and
- * it leaves a readable `skills = false` behind instead of a table that may now be empty.
- *
- * Whether it is safe to do at all is the caller's decision — the flag governs every skill
- * Codex loads, not only ours.
- */
-export async function disableFeatureFlag(host, { dryRun = false } = {}) {
-  const state = await readFeatureFlag(host);
-  if (state.required === false || state.enabled === false) {
-    return { status: "not_needed", path: state.path };
-  }
-
-  const path = state.path;
-  if (dryRun === true) {
-    return { status: "skipped_dry_run", path };
-  }
-
-  const contents = await readFile(path, "utf8");
-
-  // Scoped to the `[features]` body rather than run over the whole file, because `skills` is
-  // a plausible key in another table and rewriting someone else's value would be a silent,
-  // unrelated config change.
-  const section = /^\s*\[features\]\s*$/m.exec(contents);
-  if (section === null) {
-    return { status: "not_needed", path };
-  }
-  const bodyStart = section.index + section[0].length;
-  const after = contents.slice(bodyStart);
-  const nextSection = /^\s*\[/m.exec(after);
-  const bodyEnd = nextSection === null ? contents.length : bodyStart + nextSection.index;
-  const body = contents.slice(bodyStart, bodyEnd);
-
-  if (FEATURE_FLAG_PATTERN.test(body) === false) {
-    return { status: "not_needed", path };
-  }
-
-  const backup = `${path}.backup-${timestamp()}`;
-  await copyFile(path, backup);
-  await writeFile(
-    path,
-    contents.slice(0, bodyStart) +
-      body.replace(FEATURE_FLAG_PATTERN, "skills = false") +
-      contents.slice(bodyEnd),
-    "utf8",
-  );
-
-  return { status: "disabled", path, backup };
-}
-
-/**
  * The literal lines a user needs when nothing can be done for them automatically.
  *
  * `bundle` is the path to an archive a bundle-delivery host expects to be uploaded. Passed
@@ -526,7 +412,7 @@ export async function disableFeatureFlag(host, { dryRun = false } = {}) {
  */
 export function manualSteps(
   host,
-  { endpoint = DEFAULT_MCP_ENDPOINT, scope = "user", featureFlagEnabled = false, bundle = null } = {},
+  { endpoint = DEFAULT_MCP_ENDPOINT, scope = "user", bundle = null } = {},
 ) {
   const steps = [];
 
@@ -534,15 +420,6 @@ export function manualSteps(
     steps.push({
       title: "Upload the skill",
       body: `Settings > Capabilities: turn on code execution and file creation.\nCustomize > Skills: click +, then Create skill, then Upload a skill.\nChoose: ${bundle}`,
-    });
-  }
-
-  // Skipped when the flag is already on, because listing a step someone has just completed
-  // reads as "this did not work" and invites them to do it twice.
-  if (host.featureFlag !== null && featureFlagEnabled === false) {
-    steps.push({
-      title: `Enable skills in ${host.configPath}`,
-      body: "[features]\nskills = true",
     });
   }
 
@@ -555,17 +432,21 @@ export function manualSteps(
     });
   } else {
     const { command, args } = registerCommand(host, { endpoint, scope });
-    steps.push({ title: "Register the MCP server", body: formatCommand(command, args) });
+    const snippet = manualConfigSnippet(host, { endpoint });
+    steps.push({
+      title: "Register the MCP server",
+      body: `${formatCommand(command, args)}\nor add to ${snippet.path}:\n${snippet.body.trimEnd()}`,
+    });
   }
 
   // The restart and the sign-in are ordered by where the sign-in happens. On Claude Code it
   // happens inside a session, and `/mcp` offers only servers that session connected to at
   // startup — so a list that signs in first and restarts second describes something nobody
-  // can do. Codex signs in from a terminal and restarts afterwards to pick up the skills.
+  // can do. Codex signs in from a terminal and opens a new session afterwards for the tools.
   const auth = authInstructions(host);
   const restart = {
     title: `Start a new ${host.label} ${host.sessionNoun}`,
-    body: restartNotice(host),
+    body: serverAvailabilityNotice(host),
   };
   const signIn = {
     title: "Sign in",

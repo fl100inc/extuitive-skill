@@ -3,7 +3,11 @@
  * `npx github:fl100inc/extuitive-skill install | update | uninstall | doctor`
  *
  * Argument parsing, prompting, and printing. All the decisions live in `src/`; this file
- * exists to turn them into something readable in a terminal.
+ * exists to turn them into something readable in a terminal — and, increasingly, readable by
+ * an agent that will summarise it for a person. That second reader is why the completion
+ * output is a fixed-shape block with one line per fact (skill, server, sign-in) rather than
+ * prose: an agent can repeat three labelled lines faithfully and will paraphrase a paragraph.
+ * `--json` exists for the same reader.
  *
  * One rule worth stating: with no `--host` and no TTY, this refuses rather than guessing.
  * Writing into someone's home directory from a CI job that meant to do nothing of the sort
@@ -14,36 +18,33 @@ import process from "node:process";
 
 import {
   DEFAULT_MCP_ENDPOINT,
+  EXAMPLE_PROMPTS,
   NPX_COMMAND,
   PACKAGE_NAME,
   SKILL_COMMANDS,
 } from "../src/constants.mjs";
-import { detectHosts, getHost, HOST_IDS } from "../src/hosts.mjs";
+import { detectHosts, displayPath, getHost, HOST_IDS } from "../src/hosts.mjs";
 import {
   backupsRoot,
   buildSkillBundles,
   inspectInstalledSkills,
   inspectSkillBundles,
   installSkills,
-  otherSkillsInRoot,
-  removeLegacyCopies,
   removeSkillBundles,
   uninstallSkills,
 } from "../src/install.mjs";
 import {
   authInstructions,
-  disableFeatureFlag,
-  enableFeatureFlag,
   manualSteps,
-  readFeatureFlag,
   registerMcpServer,
-  restartNotice,
+  serverAvailabilityNotice,
+  skillAvailabilityNotice,
   unregisterMcpServer,
 } from "../src/mcp-setup.mjs";
 import { diagnose, readHostServerStatus } from "../src/doctor.mjs";
 
 const USAGE = `
-${PACKAGE_NAME} — install the Extuitive agent skills and connect them to the Extuitive MCP server.
+${PACKAGE_NAME} — install the Extuitive agent skill and connect it to the Extuitive MCP server.
 
 Usage
   ${NPX_COMMAND} install [options]
@@ -64,15 +65,19 @@ Options
   --scope <user|project>      Install for every project or just this one. Default: user.
   --dir <path>                Install into this directory instead of the host's default.
   --endpoint <url>            MCP endpoint. Default: ${DEFAULT_MCP_ENDPOINT}
-  --write-config              Allow editing the host config file to enable Codex skills.
   --keep-server               Leave the MCP server registered (uninstall only).
   --dry-run                   Report what would change without changing anything.
   --yes, -y                   Accept defaults; never prompt.
-  --json                      Machine-readable output (doctor only).
+  --json                      Machine-readable output.
   --help, -h                  Show this message.
 
+Where the skill goes
+  Claude Code     ~/.claude/skills/extuitive
+  Codex           $CODEX_HOME/skills/extuitive   (~/.codex/skills/extuitive)
+  Claude Desktop  ~/.extuitive-skill/bundles/extuitive.zip, for you to upload
+
 update refreshes an install already on this machine and stays quiet when there is
-nothing to do. uninstall removes the skills and the MCP registration; it never
+nothing to do. uninstall removes the skill and the MCP registration; it never
 touches your backups.
 
 Installs one skill, "extuitive", invoked with a command:
@@ -107,6 +112,9 @@ function parseArgs(argv) {
     } else if (arg === "--yes" || arg === "-y") {
       options.yes = true;
     } else if (arg === "--write-config") {
+      // Accepted and ignored. It used to permit enabling Codex's `[features] skills` flag,
+      // which Codex no longer has. Rejecting it would break every script and README that
+      // still passes it.
       options.writeConfig = true;
     } else if (arg === "--keep-server") {
       options.keepServer = true;
@@ -215,13 +223,313 @@ async function promptForHosts(detections) {
   }
 }
 
-async function confirm(question) {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    const answer = (await rl.question(`${question} [y/N] `)).trim().toLowerCase();
-    return answer === "y" || answer === "yes";
-  } finally {
-    rl.close();
+/* ------------------------------------------------------------------------------------------ */
+/* Setting a host up, as data                                                                  */
+/* ------------------------------------------------------------------------------------------ */
+
+/**
+ * Sign-in, as something we can print without lying about it.
+ *
+ * Install cannot see the host's credential store, so the only states it can honestly claim
+ * are the ones the host reports (`connected`, `needs_auth`) and "we just registered this, so
+ * nobody has signed in yet". Everything else is `unverified`, which is printed with the
+ * sign-in step and a note that it may already be done.
+ */
+function signInState(host, { registration, server }) {
+  const auth = authInstructions(host);
+  const instruction =
+    auth.inSession === true
+      ? `In a new ${host.label} session: ${auth.primary}`
+      : auth.primary;
+
+  if (registration.status === "manual_only") {
+    // Adding the connector and signing in are one flow in the app, so the instruction is
+    // the sign-in half of a step the person has not taken yet.
+    return { state: "in_app", instruction, inSession: false };
+  }
+  if (["skipped_dry_run", "cli_missing", "cli_broken", "failed"].includes(registration.status)) {
+    return { state: "after_registration", instruction, inSession: auth.inSession };
+  }
+  if (server?.state === "connected") {
+    return { state: "connected", instruction, inSession: auth.inSession };
+  }
+  if (server?.state === "needs_auth") {
+    return { state: "needed", instruction, inSession: auth.inSession };
+  }
+  if (registration.status === "registered" && server === null) {
+    // Just registered and no way to ask: nobody has signed in to a server that did not
+    // exist a moment ago.
+    return { state: "needed", instruction, inSession: auth.inSession };
+  }
+  return { state: "unverified", instruction, inSession: auth.inSession };
+}
+
+/**
+ * Put the skill where the host will find it, whichever of the two things that means.
+ *
+ * The returned `bundle` is the archive to be uploaded, or null for a host that reads a
+ * directory. Callers use its presence rather than the host id to decide what to print.
+ */
+async function placeSkills(host, options) {
+  if (host.skillDelivery === "bundle") {
+    const result = await buildSkillBundles(host, {
+      dir: options.dir,
+      dryRun: options.dryRun,
+    });
+    return { ...result, bundle: result.skills[0]?.destination ?? null };
+  }
+
+  const result = await installSkills(host, {
+    scope: options.scope,
+    dir: options.dir,
+    dryRun: options.dryRun,
+  });
+  return { ...result, bundle: null };
+}
+
+/**
+ * Everything install or update does for one host, returned rather than printed.
+ *
+ * `update` differs from `install` in one decision only: it asks the host whether the server
+ * is registered before registering it, because it runs repeatedly and re-adding a server
+ * that exists is a refusal both CLIs print as an error. Install registers unconditionally
+ * and treats "already exists" as success.
+ */
+async function setupHost(host, detection, options, { mode }) {
+  const cliAvailable = detection?.cliAvailable ?? false;
+
+  const skills = await placeSkills(host, options);
+
+  let server = null;
+  let registration;
+
+  if (host.mcpSetup === "connector-ui") {
+    // No side effects on either path: registration is a list of steps and the status is
+    // "cannot be read from here". Asked the same way in both modes so the summary is too.
+    registration = await registerMcpServer(host, { endpoint: options.endpoint, scope: options.scope });
+    server = readHostServerStatus(host, { cliAvailable });
+  } else if (mode === "update") {
+    server = readHostServerStatus(host, { cliAvailable });
+    if (server.state === "absent") {
+      registration = await registerMcpServer(host, {
+        endpoint: options.endpoint,
+        scope: options.scope,
+        dryRun: options.dryRun,
+        cliAvailable,
+      });
+    } else {
+      registration = { status: server.state === "unknown" ? "unknown" : "already_registered", command: null };
+    }
+  } else {
+    registration = await registerMcpServer(host, {
+      endpoint: options.endpoint,
+      scope: options.scope,
+      dryRun: options.dryRun,
+      cliAvailable,
+    });
+    // Asked even after a fresh registration, because a token from an earlier install may
+    // still be in the host's credential store — Codex keeps them in the keychain, keyed by
+    // server, and removing the server does not remove the token. Saying "sign in" to someone
+    // who is signed in is the small lie that makes people distrust the rest.
+    if (["registered", "already_registered"].includes(registration.status) && cliAvailable === true) {
+      server = readHostServerStatus(host, { cliAvailable });
+    }
+  }
+
+  const signIn = signInState(host, { registration, server });
+  const changed = skills.skills.some(
+    (skill) => skill.action !== "unchanged" || (skill.migrated ?? []).length > 0,
+  );
+  const registeredNow = registration.status === "registered";
+
+  return {
+    host: host.id,
+    label: host.label,
+    cli: host.cliResolution,
+    delivery: host.skillDelivery,
+    skillsRoot: skills.destinationRoot,
+    skills: skills.skills,
+    bundle: skills.bundle,
+    registration,
+    server,
+    signIn,
+    availability: {
+      skill: skillAvailabilityNotice(host),
+      server: serverAvailabilityNotice(host),
+    },
+    examples: EXAMPLE_PROMPTS,
+    changed,
+    registeredNow,
+    dryRun: options.dryRun,
+  };
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* Printing                                                                                    */
+/* ------------------------------------------------------------------------------------------ */
+
+const LABEL_WIDTH = 12;
+const STATE_WIDTH = 15;
+
+function row(label, state, rest = "") {
+  const lead = `  ${label.padEnd(LABEL_WIDTH)}${state.padEnd(STATE_WIDTH)}`;
+  console.log(rest === "" ? lead.trimEnd() : `${lead}${rest}`);
+}
+
+/** A continuation line under a row, aligned with the row's third column. */
+function cont(text) {
+  console.log(`  ${"".padEnd(LABEL_WIDTH + STATE_WIDTH)}${text}`);
+}
+
+function skillStateWord(skill, dryRun, bundled) {
+  if (skill.action === "unchanged") {
+    return "up to date";
+  }
+  const words = bundled === true
+    ? { created: ["built", "would build"], replaced: ["rebuilt", "would rebuild"] }
+    : { created: ["installed", "would install"], replaced: ["updated", "would update"] };
+  return words[skill.action][dryRun === true ? 1 : 0];
+}
+
+function printSkillRows(host, report, options) {
+  const bundled = report.delivery === "bundle";
+
+  // Said rather than passed over. A flag that was accepted and then had no effect is the
+  // kind of thing someone finds out about weeks later, by wondering why a skill they scoped
+  // to one project is available in all of them.
+  if (options.scope === "project" && host.supportsScope === false) {
+    console.log(`  Ignoring --scope project: a ${host.label} skill belongs to your account,`);
+    console.log("  not to a directory, so there is no per-project install to make.");
+  }
+
+  for (const skill of report.skills) {
+    const size = typeof skill.bytes === "number" ? ` (${describeSize(skill.bytes)})` : "";
+    row(bundled === true ? "Bundle" : "Skill", skillStateWord(skill, report.dryRun, bundled), `${displayPath(skill.destination)}${size}`);
+    if (bundled === false) {
+      cont(skill.skillFile);
+    }
+    if (skill.backup !== null) {
+      cont(`previous copy kept at ${displayPath(skill.backup)}`);
+    }
+    for (const move of skill.migrated ?? []) {
+      if (move.action === "removed") {
+        cont(`${report.dryRun ? "would move" : "moved"} from ${displayPath(move.from)}`);
+      } else if (move.action === "backed_up") {
+        cont(
+          `${report.dryRun ? "would move" : "moved"} from ${displayPath(move.from)}` +
+            (move.backup === null ? " (that copy differed; it would be kept in backups)" : ` (that copy differed; kept at ${displayPath(move.backup)})`),
+        );
+      } else {
+        cont(`left a copy at ${displayPath(move.from)} — the new copy could not be verified`);
+      }
+    }
+    if (skill.verified === false) {
+      cont("the installed files do not match the bundled skill; rerun install");
+    }
+  }
+}
+
+function printServerRow(host, report) {
+  const { registration } = report;
+
+  if (registration.status === "manual_only") {
+    // Not a fallback. This host has no CLI and no config file we may write, so the panel
+    // is the install. Saying so keeps it from reading as a refusal.
+    row("Connector", "add in app", "Settings > Connectors > Add custom connector");
+    return;
+  }
+
+  if (registration.status === "registered") {
+    row("MCP server", "registered", registration.command);
+  } else if (registration.status === "already_registered") {
+    row("MCP server", "registered", registration.command === null ? "already there" : `already there (${registration.command})`);
+  } else if (registration.status === "skipped_dry_run") {
+    row("MCP server", "would add", registration.command);
+  } else if (registration.status === "unknown") {
+    row("MCP server", "unknown", report.server?.detail ?? "could not ask the host");
+  } else if (registration.status === "cli_missing") {
+    row("MCP server", "not added", `${host.cli} is not on PATH`);
+  } else if (registration.status === "cli_broken") {
+    row("MCP server", "not added", `${host.cli} does not run — ${registration.detail}`);
+  } else {
+    row("MCP server", "not added", registration.detail);
+  }
+
+  if (["cli_missing", "cli_broken", "failed"].includes(registration.status)) {
+    cont(`Register it yourself: ${registration.command}`);
+    if (registration.manual !== undefined) {
+      cont(`or add to ${displayPath(registration.manual.path)}:`);
+      for (const line of registration.manual.body.trimEnd().split("\n")) {
+        cont(`  ${line}`);
+      }
+    }
+  }
+}
+
+function printSignInRow(report) {
+  const { signIn } = report;
+  if (signIn.state === "connected") {
+    row("Sign-in", "connected", report.server?.detail ?? "");
+    return;
+  }
+  if (signIn.state === "needed") {
+    row("Sign-in", "needed", signIn.instruction);
+  } else if (signIn.state === "in_app") {
+    row("Sign-in", "in the app", signIn.instruction);
+  } else if (signIn.state === "after_registration") {
+    row("Sign-in", "needed", `after registering: ${signIn.instruction}`);
+  } else {
+    row("Sign-in", "unverified", signIn.instruction);
+    cont("If the Extuitive tools already work for you, this is done.");
+  }
+  cont("Opens a browser; only you can complete it.");
+}
+
+/**
+ * The block an installing agent is expected to relay. Three facts, then when each becomes
+ * usable, then what to type. Ordered so the true part ("the skill is available") comes first
+ * and the conditional part ("once you sign in") is attached to the thing it conditions.
+ */
+function printSummary(host, report, options) {
+  printSkillRows(host, report, options);
+  printServerRow(host, report);
+  printSignInRow(report);
+
+  console.log("");
+  const serverRegistered = ["registered", "already_registered"].includes(report.registration.status);
+  if (report.dryRun === true) {
+    console.log("  Nothing was changed.");
+  } else if (report.registration.status === "manual_only") {
+    console.log(`  ${report.availability.skill} ${report.availability.server}`);
+  } else if (report.signIn.state === "connected") {
+    console.log(`  ${report.availability.skill} The Extuitive tools are connected.`);
+  } else if (serverRegistered === true) {
+    console.log(`  ${report.availability.skill} ${report.availability.server}`);
+  } else {
+    console.log(`  ${report.availability.skill} The Extuitive tools need the MCP server registered first (above).`);
+  }
+  if (host.invocationNote !== null) {
+    // Worth stating because the other hosts train the opposite habit: there is no
+    // `/extuitive` here, so the examples below are the whole invocation syntax.
+    console.log(`  ${host.invocationNote}`);
+  }
+  console.log(`  Try: ${report.examples.map((prompt) => `"${prompt}"`).join("  ·  ")}`);
+}
+
+/**
+ * What is left for the person to do, when anything is.
+ *
+ * Two different reasons lead here and they are framed differently. A CLI host lands here
+ * after something went wrong, and "finish this by hand" is the right frame. A connector-UI
+ * host lands here every time, because the panel is the install — and that frame would read
+ * as a failure of an install that worked exactly as designed.
+ */
+function printRemainingSteps(host, report, options) {
+  const manualOptions = { endpoint: options.endpoint, scope: options.scope, bundle: report.bundle };
+  if (report.registration.status === "manual_only") {
+    printManualSteps(host, manualOptions, `Do the rest in ${host.label}:`);
+  } else if (["cli_missing", "cli_broken", "failed"].includes(report.registration.status)) {
+    printManualSteps(host, manualOptions);
   }
 }
 
@@ -248,62 +556,28 @@ function describeSize(bytes) {
   if (typeof bytes !== "number") {
     return "";
   }
-  return bytes < 1024 ? ` (${bytes} B)` : ` (${Math.round(bytes / 102.4) / 10} KB)`;
+  return bytes < 1024 ? `${bytes} B` : `${Math.round(bytes / 102.4) / 10} KB`;
 }
 
-/**
- * Put the skill where the host will find it, whichever of the two things that means.
- *
- * The returned `bundle` is the archive to be uploaded, or null for a host that reads a
- * directory. Callers use its presence rather than the host id to decide what to print.
- */
-async function placeSkills(host, options) {
-  if (host.skillDelivery === "bundle") {
-    const result = await buildSkillBundles(host, {
-      dir: options.dir,
-      dryRun: options.dryRun,
-    });
-    return { ...result, bundle: result.skills[0]?.destination ?? null };
-  }
-
-  const result = await installSkills(host, {
-    scope: options.scope,
-    dir: options.dir,
-    dryRun: options.dryRun,
-  });
-  return { ...result, bundle: null };
+function emitJson(command, options, reports) {
+  console.log(JSON.stringify({ command, dryRun: options.dryRun, hosts: reports }, null, 2));
 }
 
-/** What the skill files landed as, in one line per skill. */
-function printPlacement(host, result, options) {
-  // Said rather than passed over. A flag that was accepted and then had no effect is the
-  // kind of thing someone finds out about weeks later, by wondering why a skill they scoped
-  // to one project is available in all of them.
-  if (options.scope === "project" && host.supportsScope === false) {
-    console.log(`  Ignoring --scope project: a ${host.label} skill belongs to your account,`);
-    console.log("  not to a directory, so there is no per-project install to make.");
-  }
-
-  const label = host.skillDelivery === "bundle" ? "Bundle" : "Skills";
-  console.log(`  ${label} → ${result.destinationRoot}`);
-  for (const skill of result.skills) {
-    const name = host.skillDelivery === "bundle" ? `${skill.name}.zip` : skill.name;
-    const note = skill.backup === null ? "" : ` (previous copy kept at ${skill.backup})`;
-    console.log(`${BULLET} ${name} ${skill.action}${describeSize(skill.bytes)}${note}`);
-  }
-}
+/* ------------------------------------------------------------------------------------------ */
+/* Commands                                                                                    */
+/* ------------------------------------------------------------------------------------------ */
 
 async function commandInstall(options) {
   const detections = detectHosts();
   let hostIds = resolveHostIds(options, detections);
 
-  const interactive = process.stdin.isTTY === true && options.yes === false;
+  const interactive = process.stdin.isTTY === true && options.yes === false && options.json === false;
   if (options.host === null) {
     if (interactive === true) {
       hostIds = await promptForHosts(detections);
     } else if (hostIds.length === 0) {
       throw new Error(
-        "No host detected and no --host given. Pass --host claude, --host codex, or --host both.",
+        `No host detected and no --host given. Pass --host ${HOST_IDS.join(", --host ")}, or --host all.`,
       );
     }
   }
@@ -314,116 +588,29 @@ async function commandInstall(options) {
     return 1;
   }
 
-  if (options.dryRun === true) {
-    console.log("Dry run — nothing will be written.\n");
-  }
-
+  const reports = [];
   for (const hostId of hostIds) {
     const host = getHost(hostId);
     const detection = detections.find((candidate) => candidate.host.id === hostId);
+    reports.push({ host, report: await setupHost(host, detection, options, { mode: "install" }) });
+  }
+
+  if (options.json === true) {
+    emitJson("install", options, reports.map((entry) => entry.report));
+    return 0;
+  }
+
+  if (options.dryRun === true) {
+    console.log("Dry run — nothing will be written.");
+  }
+  if (options.writeConfig === true) {
+    console.log("Note: --write-config is no longer needed; Codex skills are on by default.");
+  }
+
+  for (const { host, report } of reports) {
     heading(`${host.label} — ${host.surfaces}`);
-
-    const result = await placeSkills(host, options);
-    printPlacement(host, result, options);
-
-    const flag = await readFeatureFlag(host);
-    let featureFlagEnabled = flag.required === false || flag.enabled === true;
-
-    if (flag.required === true && flag.enabled === false) {
-      const allowed =
-        options.writeConfig === true ||
-        (interactive === true && (await confirm(`\n  Enable skills in ${flag.path}?`)));
-
-      if (allowed === true) {
-        const applied = await enableFeatureFlag(host, { dryRun: options.dryRun });
-        if (applied.status === "enabled") {
-          featureFlagEnabled = true;
-          const backup = applied.backup === null ? "" : ` (backup at ${applied.backup})`;
-          console.log(`${BULLET} Enabled skills in ${applied.path}${backup}`);
-        } else if (applied.status === "skipped_dry_run") {
-          console.log(`${BULLET} Would enable skills in ${applied.path}`);
-        }
-      } else {
-        console.log(`${BULLET} Skills are not enabled in ${flag.path}. Add:`);
-        console.log("       [features]");
-        console.log("       skills = true");
-        console.log("     or rerun with --write-config.");
-      }
-    }
-
-    const registration = await registerMcpServer(host, {
-      endpoint: options.endpoint,
-      scope: options.scope,
-      dryRun: options.dryRun,
-      cliAvailable: detection?.cliAvailable ?? false,
-    });
-
-    const manualOptions = {
-      endpoint: options.endpoint,
-      scope: options.scope,
-      featureFlagEnabled,
-      bundle: result.bundle,
-    };
-
-    if (registration.status === "registered") {
-      console.log(`${BULLET} Registered the MCP server (${registration.command})`);
-    } else if (registration.status === "already_registered") {
-      console.log(`${BULLET} MCP server already registered`);
-    } else if (registration.status === "skipped_dry_run") {
-      console.log(`${BULLET} Would run: ${registration.command}`);
-    } else if (registration.status === "manual_only") {
-      // Not a fallback. This host has no CLI and no config file we may write, so the panel
-      // is the install — and the sign-in, and the restart notice, all of which `manualSteps`
-      // already orders correctly. Saying why keeps it from reading as a refusal.
-      console.log(`${BULLET} ${host.label} has no CLI, and its skills live in your Anthropic`);
-      console.log("     account rather than on this machine, so the rest is done in the app.");
-      printManualSteps(host, manualOptions, `Do the rest in ${host.label}:`);
-      continue;
-    } else if (registration.status === "cli_missing") {
-      console.log(`${BULLET} ${host.cli} is not on PATH, so the server was not registered.`);
-      printManualSteps(host, manualOptions);
-      continue;
-    } else {
-      console.log(`${BULLET} Could not register the MCP server: ${registration.detail}`);
-      printManualSteps(host, manualOptions);
-      continue;
-    }
-
-    // On Claude Code the restart comes first, because signing in means opening `/mcp` in a
-    // session that has the server — which the session this ran from does not. Getting that
-    // order wrong is the failure people report as a broken install.
-    const auth = authInstructions(host);
-    const printRestart = () => {
-      const when = auth.inSession === true ? "Next" : "Then";
-      console.log(`\n  ${when}, start a new ${host.label} ${host.sessionNoun}.`);
-      console.log(`  ${restartNotice(host)}`);
-    };
-    const printSignIn = () => {
-      const lead = auth.inSession === true ? "Then sign in" : "Next, sign in";
-      console.log(`\n  ${lead} — this opens a browser and only you can complete it:`);
-      console.log(`    ${auth.primary}`);
-      if (auth.alternative !== null) {
-        console.log(`    or: ${auth.alternative}`);
-      }
-    };
-
-    if (auth.inSession === true) {
-      printRestart();
-      printSignIn();
-    } else {
-      printSignIn();
-      printRestart();
-    }
-
-    // Printed per host rather than once at the end, because the prefix differs and the
-    // wrong one is indistinguishable from a failed install: Codex answers a `/` it does
-    // not know with "Unrecognized command".
-    console.log(`\n  Invoke it in ${host.label} with:`);
-    console.log(
-      host.invocationNote === null
-        ? `    ${host.invocationPrefix}extuitive ${SKILL_COMMANDS[0]}`
-        : `    ${host.invocationNote}`,
-    );
+    printSummary(host, report, options);
+    printRemainingSteps(host, report, options);
   }
 
   console.log("\nNo Extuitive account yet? The sign-in page has a Sign up button —");
@@ -437,7 +624,8 @@ async function commandInstall(options) {
  *
  * Update refreshes what is there rather than installing anywhere new: someone who chose
  * Claude Code only should not acquire a Codex install by running update. An explicit `--host`
- * overrides that, since naming a host is asking for it.
+ * overrides that, since naming a host is asking for it. A copy at the previous location
+ * counts — that is exactly the person update exists to move.
  */
 async function resolveUpdateTargets(options, detections) {
   if (options.host !== null) {
@@ -455,7 +643,8 @@ async function resolveUpdateTargets(options, detections) {
         ? await inspectSkillBundles(detection.host, { dir: options.dir })
         : await inspectInstalledSkills(detection.host, { scope: options.scope, dir: options.dir });
 
-    if (inspection.skills.some((skill) => skill.present === true) === true) {
+    const present = inspection.skills.some((skill) => skill.present === true);
+    if (present === true || (inspection.previous ?? []).length > 0) {
       targets.push(detection.host.id);
     }
   }
@@ -466,177 +655,57 @@ async function resolveUpdateTargets(options, detections) {
  * Refresh an existing install in place.
  *
  * `install` already does the file work correctly and idempotently, so this is deliberately
- * thin. What makes it a separate command is everything it does *not* print: an update is a
- * routine thing to run repeatedly, and re-issuing the sign-in steps, the sign-up pitch and
- * the invocation reminder every time trains people to ignore all of it. Steps appear here
- * only when something actually needs doing.
+ * thin. What makes it a separate command is what it does *not* print: an update is a routine
+ * thing to run repeatedly, and re-issuing the sign-up pitch every time trains people to
+ * ignore all of it. The summary block is short enough to print every time; the extras are
+ * not.
  */
 async function commandUpdate(options) {
   const detections = detectHosts();
   const hostIds = await resolveUpdateTargets(options, detections);
 
   if (hostIds.length === 0) {
-    console.log("The Extuitive skill is not installed here yet.");
-    console.log(`Install it with: ${NPX_COMMAND} install`);
+    if (options.json === true) {
+      emitJson("update", options, []);
+    } else {
+      console.log("The Extuitive skill is not installed here yet.");
+      console.log(`Install it with: ${NPX_COMMAND} install`);
+    }
     return 1;
   }
 
-  if (options.dryRun === true) {
-    console.log("Dry run — nothing will be written.\n");
-  }
-
-  const interactive = process.stdin.isTTY === true && options.yes === false;
-
+  const reports = [];
   for (const hostId of hostIds) {
     const host = getHost(hostId);
     const detection = detections.find((candidate) => candidate.host.id === hostId);
+    reports.push({ host, report: await setupHost(host, detection, options, { mode: "update" }) });
+  }
+
+  if (options.json === true) {
+    emitJson("update", options, reports.map((entry) => entry.report));
+    return 0;
+  }
+
+  if (options.dryRun === true) {
+    console.log("Dry run — nothing will be written.");
+  }
+
+  for (const { host, report } of reports) {
     heading(host.label);
-
-    const result = await placeSkills(host, options);
-    const changed = result.skills.filter((skill) => skill.action !== "unchanged");
-    printPlacement(host, result, options);
-
-    const flag = await readFeatureFlag(host);
-    if (flag.required === true && flag.enabled === false) {
-      const allowed =
-        options.writeConfig === true ||
-        (interactive === true && (await confirm(`\n  Enable skills in ${flag.path}?`)));
-
-      if (allowed === true) {
-        const applied = await enableFeatureFlag(host, { dryRun: options.dryRun });
-        if (applied.status === "enabled") {
-          const backup = applied.backup === null ? "" : ` (backup at ${applied.backup})`;
-          console.log(`${BULLET} Enabled skills in ${applied.path}${backup}`);
-        } else if (applied.status === "skipped_dry_run") {
-          console.log(`${BULLET} Would enable skills in ${applied.path}`);
-        }
-      } else {
-        console.log(`${BULLET} Skills are not enabled in ${flag.path}. Add:`);
-        console.log("       [features]");
-        console.log("       skills = true");
-        console.log("     or rerun with --write-config.");
-      }
-    }
-
-    // Asking the host is the only way to tell "never registered" from "registered but not
-    // signed in"; both look like a 401 from outside. Update acts on the first and only
-    // mentions the second, because signing in is not something it can do for anyone.
-    const server = readHostServerStatus(host, { cliAvailable: detection?.cliAvailable ?? false });
-    let registeredNow = false;
-
-    if (server.state === "absent") {
-      const registration = await registerMcpServer(host, {
-        endpoint: options.endpoint,
-        scope: options.scope,
-        dryRun: options.dryRun,
-        cliAvailable: detection?.cliAvailable ?? false,
-      });
-
-      if (registration.status === "registered") {
-        registeredNow = true;
-        console.log(`${BULLET} Registered the MCP server (${registration.command})`);
-      } else if (registration.status === "already_registered") {
-        console.log(`${BULLET} MCP server already registered`);
-      } else if (registration.status === "skipped_dry_run") {
-        console.log(`${BULLET} Would run: ${registration.command}`);
-      } else if (registration.status === "cli_missing") {
-        console.log(`${BULLET} ${host.cli} is not on PATH, so the server was not registered.`);
-      } else {
-        console.log(`${BULLET} Could not register the MCP server: ${registration.detail}`);
-      }
-    } else if (server.state === "needs_auth") {
-      const auth = authInstructions(host);
-      console.log(`${BULLET} The server is registered but not signed in:`);
-      if (auth.inSession === true) {
-        console.log(`       ${restartNotice(host)}`);
-        console.log(`       Then: ${auth.primary}`);
-      } else {
-        console.log(`       ${auth.primary}`);
-      }
-      if (auth.alternative !== null) {
-        console.log(`       or: ${auth.alternative}`);
-      }
-    } else if (server.state === "unknown") {
-      console.log(`${BULLET} MCP server: ${server.detail}`);
-    } else if (server.state === "unverifiable") {
-      // Said as a fact about what can be seen, not as a status. The alternative wording —
-      // the "MCP server registered" line below — would be an assertion nothing here checked.
-      console.log(`${BULLET} Connector: ${server.detail}`);
-    } else {
-      console.log(`${BULLET} MCP server registered`);
-    }
-
-    if (changed.length === 0 && registeredNow === false) {
+    printSummary(host, report, options);
+    if (report.changed === false && report.registeredNow === false) {
       console.log("\n  Already up to date.");
       continue;
     }
-
-    if (options.dryRun === true) {
-      continue;
-    }
-
     // A rebuilt bundle changes nothing until it is uploaded again, so this is the one host
-    // where a successful update still leaves the person with something to do. Restarting
-    // would not help and is not mentioned.
-    if (host.skillDelivery === "bundle" && changed.length > 0) {
-      console.log(`\n  Upload the new bundle to pick this up: ${result.bundle}`);
+    // where a successful update still leaves the person with something to do.
+    if (report.bundle !== null && report.changed === true && options.dryRun === false) {
+      console.log(`\n  Upload the new bundle to pick this up: ${displayPath(report.bundle)}`);
       console.log(`  In ${host.label}: Customize > Skills. Uploading again replaces the old copy.`);
-      continue;
-    }
-
-    // Only when something actually changed. A refresh that rewrote nothing gives nobody a
-    // reason to restart — but a server registered just now is a reason even on Claude Code,
-    // where skills alone would not have been.
-    const restartNeeded =
-      (host.loadsSkillsAtStartup === true && changed.length > 0) ||
-      (host.loadsMcpAtStartup === true && registeredNow === true);
-    if (restartNeeded === true) {
-      console.log(`\n  Start a new ${host.label} ${host.sessionNoun} to pick this up.`);
-      console.log(`  ${restartNotice(host)}`);
     }
   }
 
   return 0;
-}
-
-/**
- * Codex's skills flag, put back only when doing so cannot break anything else.
- *
- * `[features] skills = true` is global: it is what lets Codex load skills at all, not just
- * ours. Reverting it because we happen to be leaving would silently disable every other
- * skill the user has, which is a far worse outcome than a leftover line in a config file. So
- * the flag comes off only when the skills root has nothing else in it, and otherwise the
- * reason for leaving it is stated rather than passed over in silence.
- */
-async function revertFeatureFlag(host, options, interactive) {
-  const flag = await readFeatureFlag(host);
-  if (flag.required === false || flag.enabled === false) {
-    return;
-  }
-
-  const others = await otherSkillsInRoot(host, { scope: options.scope, dir: options.dir });
-  if (others.length > 0) {
-    console.log(`${BULLET} Left skills enabled in ${flag.path} — ${host.label} still has`);
-    console.log(`     ${others.join(", ")} there, which the flag also governs.`);
-    return;
-  }
-
-  const allowed =
-    options.writeConfig === true ||
-    (interactive === true && (await confirm(`\n  Turn skills back off in ${flag.path}?`)));
-
-  if (allowed === false) {
-    console.log(`${BULLET} Left skills enabled in ${flag.path}.`);
-    return;
-  }
-
-  const applied = await disableFeatureFlag(host, { dryRun: options.dryRun });
-  if (applied.status === "disabled") {
-    const backup = applied.backup === null ? "" : ` (backup at ${applied.backup})`;
-    console.log(`${BULLET} Turned skills off in ${applied.path}${backup}`);
-  } else if (applied.status === "skipped_dry_run") {
-    console.log(`${BULLET} Would turn skills off in ${applied.path}`);
-  }
 }
 
 async function commandUninstall(options) {
@@ -652,8 +721,6 @@ async function commandUninstall(options) {
     console.log("Dry run — nothing will be removed.\n");
   }
 
-  const interactive = process.stdin.isTTY === true && options.yes === false;
-
   for (const hostId of hostIds) {
     const host = getHost(hostId);
     const detection = detections.find((candidate) => candidate.host.id === hostId);
@@ -665,14 +732,10 @@ async function commandUninstall(options) {
       : await uninstallSkills(host, { scope: options.scope, dir: options.dir, dryRun: options.dryRun });
 
     for (const skill of result.skills) {
-      console.log(`${BULLET} ${bundled === true ? `${skill.name}.zip` : skill.name} ${skill.action}`);
-    }
-
-    // Codex scans its legacy directory too, so a copy left there survives the removal above
-    // and keeps loading — the skill appears to come back.
-    const legacy = await removeLegacyCopies(host, { dryRun: options.dryRun });
-    for (const copy of legacy) {
-      console.log(`${BULLET} ${copy.name} removed from ${copy.path}`);
+      const name = bundled === true ? `${skill.name}.zip` : skill.name;
+      const where = skill.previousLocation === true ? ` from previous location ${displayPath(skill.destination)}` : ` (${displayPath(skill.destination)})`;
+      const verb = skill.action === "removed" && options.dryRun === true ? "would be removed" : skill.action;
+      console.log(`${BULLET} ${name} ${verb}${where}`);
     }
 
     if (options.keepServer === true) {
@@ -698,13 +761,14 @@ async function commandUninstall(options) {
       } else if (removal.status === "cli_missing") {
         console.log(`${BULLET} ${host.cli} is not on PATH, so the server is still registered.`);
         console.log(`     Remove it yourself: ${removal.command}`);
+      } else if (removal.status === "cli_broken") {
+        console.log(`${BULLET} ${host.cli} does not run (${removal.detail}), so the server is still registered.`);
+        console.log(`     Remove it yourself: ${removal.command}`);
       } else {
         console.log(`${BULLET} Could not unregister the MCP server: ${removal.detail}`);
         console.log(`     Remove it yourself: ${removal.command}`);
       }
     }
-
-    await revertFeatureFlag(host, options, interactive);
 
     // Deleting the bundle removed the archive, not the skill. The skill went to an account
     // when it was uploaded and is still there, on every device signed into it — so an
@@ -722,7 +786,7 @@ async function commandUninstall(options) {
     console.log("  to hold, not ours to clear. Revoking access is done from Extuitive.");
   }
 
-  console.log(`\nBackups were left alone at ${backupsRoot()}`);
+  console.log(`\nBackups were left alone at ${displayPath(backupsRoot())}`);
   console.log("They exist because an install found a skill it did not write. Delete them");
   console.log("yourself once you are sure you do not want them.");
 
@@ -780,7 +844,13 @@ async function commandDoctor(options) {
   for (const entry of report.hosts) {
     const bundled = entry.host.skillDelivery === "bundle";
     heading(`${entry.host.label} — ${entry.host.surfaces}`);
-    console.log(`  ${(bundled === true ? "Bundle" : "Skills").padEnd(10)}${entry.skillsRoot}`);
+    const cli = entry.cliResolution;
+    if (cli.state !== "none") {
+      console.log(
+        `  ${"CLI".padEnd(10)}${cli.state === "available" ? `${cli.path} (${cli.detail})` : cli.state === "broken" ? `broken — ${cli.detail}` : "not found"}`,
+      );
+    }
+    console.log(`  ${(bundled === true ? "Bundle" : "Skills").padEnd(10)}${displayPath(entry.skillsRoot)}`);
 
     for (const skill of entry.inspection.skills) {
       // The two hosts fail differently and so are marked differently. A copied skill is
@@ -789,6 +859,9 @@ async function commandDoctor(options) {
       const healthy =
         skill.present === true && (bundled === true ? skill.current : skill.nameMatches) === true;
       console.log(`${BULLET} [${healthy === true ? "ok" : "--"}] ${skill.name}`);
+    }
+    for (const copy of entry.previous ?? []) {
+      console.log(`${BULLET} [--] ${copy.name} also at previous location ${displayPath(copy.path)}`);
     }
 
     console.log(

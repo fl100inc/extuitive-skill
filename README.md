@@ -26,6 +26,56 @@ next to **Log in**, both using a one-time email code, so you can create the acco
 same browser step that grants your host access. If you have not connected Meta yet, that page
 then points you at the right setup step and brings you back.
 
+## Install with an agent
+
+Paste this into Claude Code or Codex and it does the rest:
+
+> Install the Extuitive skill: run
+> **`npx github:fl100inc/extuitive-skill install --host codex --yes`**
+> (use `--host claude` in Claude Code, or `--host all`). Then tell me where the skill was
+> installed, linking its name to the `SKILL.md` path the installer printed, relay the sign-in
+> step exactly as printed without running it, and say when the skill and the Extuitive tools
+> will be available.
+
+The installer's output is built for that reader. It ends with one block per host:
+
+```
+Codex — the Codex CLI, the Codex desktop app, and the IDE extension
+───────────────────────────────────────────────────────────────────
+  Skill       installed      ~/.codex/skills/extuitive
+                             /Users/you/.codex/skills/extuitive/SKILL.md
+  MCP server  registered     codex mcp add extuitive --url https://go.extuitive.com/mcp
+  Sign-in     needed         codex mcp login extuitive
+                             Opens a browser; only you can complete it.
+
+  The skill is available on your next turn. Codex connects MCP servers when a session
+  starts, so the Extuitive tools appear in a new session once you have signed in.
+  Try: "Check my Extuitive connection"  ·  "Upload these images to Extuitive"
+```
+
+Three facts on three lines, each with its own state, so the summary an agent gives back can be
+short and still true:
+
+> Installed [Extuitive](/Users/you/.codex/skills/extuitive/SKILL.md) in `~/.codex/skills/extuitive`.
+> The skill will be available on your next turn.
+> Sign in with `codex mcp login extuitive`, then start a new session for the Extuitive tools.
+> Try: "Check my Extuitive connection."
+
+If you are the agent doing the install, four rules:
+
+- **Link the skill name to the absolute `SKILL.md` path** on the second line of the block.
+  The first line is the `~` form for display; the second exists for the link.
+- **Report the `Sign-in` line as printed and never run it.** `codex mcp login` opens a browser
+  and waits for a redirect your shell cannot receive; `/mcp` belongs to the person's session.
+  When it reads `connected`, say so and skip the instruction.
+- **Say what is available when.** The skill is live now (Codex: next turn; Claude Code:
+  immediately; Claude Desktop: once uploaded, in new chats). The Extuitive *tools* are not:
+  every host connects MCP servers when a session starts, so they appear in a new session, and
+  only after sign-in. Do not say "everything is ready" while the `Sign-in` line says `needed`.
+- **Pass `--host` and `--yes`.** Without a TTY the installer refuses to guess which host, and
+  without `--yes` it may wait on a prompt you cannot answer. Add `--json` if you would rather
+  read structured output than the block.
+
 ## What gets installed
 
 One skill, `extuitive`, which takes a command:
@@ -60,7 +110,9 @@ commands rather than five skills — `/extuitive-upload` would need a separate d
 time, and the command form reads better and keeps one description in front of the model.
 
 You usually will not type any of it. Asking for the underlying thing — "upload these ads to
-Extuitive" — reaches the skill on its own.
+Extuitive", "check my Extuitive connection" — reaches the skill on its own. The second one
+routes to `init`, which checks tools, sign-in, and workspaces in order and reports where it
+stopped; it is the right first thing to say after installing.
 
 ## Install
 
@@ -71,7 +123,7 @@ other:
 | `--host` | Covers | Skills live |
 | --- | --- | --- |
 | `claude` | The `claude` CLI, and the **Code tab** of the Claude Desktop app | `~/.claude/skills` |
-| `codex` | The Codex CLI, the Codex desktop app, and the IDE extension | `~/.agents/skills` |
+| `codex` | The Codex CLI, the Codex desktop app, and the IDE extension | `~/.codex/skills` |
 | `claude-desktop` | The **Chat and Cowork tabs** of the Claude Desktop app | your Anthropic account |
 
 With no `--host`, the installer detects what is on the machine and asks. `--host all` takes
@@ -90,9 +142,9 @@ Which does:
 claude mcp add --transport http extuitive https://go.extuitive.com/mcp --scope user
 ```
 
-Then **start a new Claude Code session** — servers are connected at startup, so `extuitive`
-is not in the session you installed from. In that new session run `/mcp`, choose `extuitive`,
-and approve.
+The skill is usable immediately. The server is not: **start a new Claude Code session** —
+servers are connected at startup, so `extuitive` is not in the session you installed from. In
+that new session run `/mcp`, choose `extuitive`, and approve.
 
 `/mcp` is the whole sign-in story on Claude Code. There is a `claude mcp login` on recent
 versions, but it is left out on purpose: this output is usually read by an agent inside a
@@ -107,33 +159,41 @@ one project and looks broken in the next.
 ### Codex
 
 ```bash
-npx github:fl100inc/extuitive-skill install --host codex --write-config
+npx github:fl100inc/extuitive-skill install --host codex
 ```
 
 Which does:
 
-```toml
-# ~/.codex/config.toml — skills are behind an experimental flag
-[features]
-skills = true
-```
-
 ```bash
-# skills → ~/.agents/skills/
+# skills → $CODEX_HOME/skills/   (~/.codex/skills/ unless CODEX_HOME is set)
 codex mcp add extuitive --url https://go.extuitive.com/mcp
 ```
 
-Then `codex mcp login extuitive` to sign in, and **restart Codex** — it reads skills once at
-startup, so new ones are invisible until you do.
+Then `codex mcp login extuitive` to sign in. The skill itself is picked up on your next turn;
+the Extuitive **tools** appear in a new Codex session, because MCP servers are connected when
+a session starts.
 
 **This is one install for three programs.** The Codex desktop app, the CLI and the IDE
-extension share `~/.codex/config.toml` for MCP and all read user skills from
-`~/.agents/skills`, so there is nothing extra to do for the app. If you prefer clicking, the
-app has the same two things under Settings > MCP servers: **Add server**, choosing Streamable
-HTTP, and **Authenticate**.
+extension share `~/.codex/config.toml` for MCP and the same skills directories, so there is
+nothing extra to do for the app. If you prefer clicking, the app has the same two things under
+Settings > MCP servers: **Add server**, choosing Streamable HTTP, and **Authenticate**.
 
-`--write-config` is what permits editing `~/.codex/config.toml`. Without it you are shown the
-two lines to add yourself. Either way the file is backed up before it is touched.
+**Where the skill goes.** Codex scans two personal skill directories, `$CODEX_HOME/skills`
+and `~/.agents/skills`, and loads from both. Codex's own bundled `$skill-installer` — and so
+every "install this skill from a URL" done by an agent — writes to `$CODEX_HOME/skills`, so
+that is where this installer puts Extuitive too, next to the rest of your skills. Earlier
+versions used `~/.agents/skills`; `install` and `update` move a copy found there to the new
+location (keeping a backup if it was edited), and `doctor` names it if one is still around.
+`--dir` overrides all of this, and `--scope project` uses `./.agents/skills`, which is what
+Codex reads for repository skills.
+
+Codex no longer needs `[features] skills = true`; skills are on by default. `--write-config`,
+which used to permit adding that line, is accepted and ignored.
+
+**Codex app without the CLI on PATH.** The installer runs `codex --version` before trusting
+what `which` found — an npm-installed `codex` whose vendored binary is missing fails with
+`spawn … ENOENT` and would otherwise register nothing — and falls back to the binary inside
+the Codex or ChatGPT desktop app on macOS. Point it somewhere else with `CODEX_CLI_PATH`.
 
 ### Claude Desktop
 
@@ -187,10 +247,13 @@ instead. Cowork and the Code tab can reach your files normally.
 | `--scope <user\|project>` | `user` | Every project, or only this one. Ignored by `claude-desktop`, where a skill belongs to an account rather than a directory. |
 | `--dir <path>` | host default | Install skills, or write the bundle, somewhere else entirely. |
 | `--endpoint <url>` | `https://go.extuitive.com/mcp` | Point at a different server. |
-| `--write-config` | off | Allow editing the host's config file. |
 | `--keep-server` | off | Uninstall only: leave the MCP server registered. |
 | `--dry-run` | off | Report what would change, change nothing. |
 | `--yes`, `-y` | off | Take defaults, never prompt. |
+| `--json` | off | Structured output instead of the summary block. |
+
+Environment: `CODEX_HOME` moves Codex's config and skills directory together; `CODEX_CLI_PATH`
+and `CLAUDE_CLI_PATH` name the CLI binary when the one on PATH is wrong or missing.
 
 No client id, secret, or API key anywhere. The server supports Dynamic Client Registration, so
 both hosts negotiate their own credentials from the URL alone.
@@ -278,12 +341,17 @@ which is not visible from the outside. Add `--json` for machine-readable output.
 
 Common causes, in the order they usually happen:
 
-- **Skills do not appear.** On Codex, either `[features] skills = true` is missing from
-  `~/.codex/config.toml` or you have not restarted since installing. On both hosts, a skill
-  whose frontmatter `name` differs from its directory name silently fails to load; `doctor`
-  checks this.
-- **A stale duplicate.** Codex still scans the legacy `~/.codex/skills` alongside
-  `~/.agents/skills`, so an old copy can shadow a new one. `doctor` names any it finds.
+- **The skill does not appear.** On Codex it appears on the next turn, not the current one;
+  in a resumed thread, start a new one. On the CLI hosts, a skill whose frontmatter `name`
+  differs from its directory name silently fails to load; `doctor` checks this. A skill can
+  also be disabled without being deleted, via `[[skills.config]]` in `~/.codex/config.toml`.
+- **The skill appears twice.** A copy is in both `~/.codex/skills` and `~/.agents/skills`,
+  which Codex both scans. `update` moves the old one (backing it up if it differs); `doctor`
+  names it.
+- **`codex` is on PATH but nothing was registered.** An npm-installed `codex` whose vendored
+  binary is missing dies with `spawn … ENOENT`. The installer falls back to the desktop app's
+  binary on macOS; elsewhere, reinstall the CLI or set `CODEX_CLI_PATH`. `doctor` prints which
+  binary it is using on the `CLI` line.
 - **The install said it worked and the tools are not there.** Every host connects MCP servers
   when a session starts, so a server registered from inside a running session — or by an
   agent in one — is invisible to it. Start a new session, or a new chat, before concluding
@@ -293,7 +361,9 @@ Common causes, in the order they usually happen:
   installs: `--host claude-desktop` and `--host claude` respectively.
 - **Tools are listed but every call is refused.** Sign-in was never completed. Run `/mcp` in
   Claude Code, `codex mcp login extuitive` in a terminal, or click Connect next to `extuitive`
-  in Claude Desktop's Settings > Connectors.
+  in Claude Desktop's Settings > Connectors. `doctor` reads Codex's own answer
+  (`codex mcp list --json` → `auth_status`), so `Sign-in connected` means a token is actually
+  stored.
 - **A `403` part-way through an upload.** Presigned URLs last 30 minutes and a whole batch is
   signed at once, so late files in a big batch can expire mid-transfer. The script reports
   these as `needsResign` and `needsPartResign`; the fix is `resign_upload` or
@@ -319,16 +389,16 @@ Refreshes an install that is already here. It only touches hosts that already ha
 so running it will not quietly add Codex to a machine set up for Claude Code alone — pass
 `--host` if that is what you want.
 
-It rewrites skill files that changed, reports `unchanged` for those that did not, and prints
+It rewrites skill files that changed, reports `up to date` for those that did not, and prints
 `Already up to date.` when there was nothing to do. It re-registers the MCP server only if
-your host has lost the registration, and mentions signing in only if your host says it is not
-signed in. The restart reminder appears only when something actually changed — files that
-moved, or a registration it had to put back.
+your host has lost the registration, and reports sign-in from what your host says rather than
+assuming. A copy at the previous Codex location (`~/.agents/skills`) counts as an install to
+update, and is moved.
 
 `install` does the same file work — it has always compared trees and backed up anything that
 differed — so an update is safe to do either way. The difference is what gets printed: install
-walks you through sign-in and shows you how to invoke the skill every time, which is the right
-thing once and noise on the fifth run.
+adds the sign-up note and the manual steps when a CLI could not be driven; update prints the
+summary block and stops.
 
 The package is fetched from this repository rather than a registry, so `npx` resolves the ref
 on each run and an update picks up whatever is on `main`.
@@ -339,9 +409,9 @@ on each run and an update picks up whatever is on `main`.
 npx github:fl100inc/extuitive-skill uninstall
 ```
 
-Removes the skill directories, deletes any stale copy in Codex's legacy `~/.codex/skills`, and
-unregisters the MCP server from your host. Pass `--keep-server` to drop the skills but keep the
-tools registered.
+Removes the skill directories — from the current location and from Extuitive's previous Codex
+location, `~/.agents/skills`, if a copy is there — and unregisters the MCP server from your
+host. Pass `--keep-server` to drop the skills but keep the tools registered.
 
 On Claude Desktop it deletes the built archive and prints the two removals it cannot do for
 you: the skill, in Customize > Skills, and the connector, in Settings > Connectors. Both live
@@ -354,12 +424,9 @@ a skill that differed from the one it was about to write, so it may be the only 
 something you wrote. The uninstall prints the path; deleting them is your call.
 
 **Your sign-in.** The OAuth token lives in your host's own credential store, which is not ours
-to read or clear. Revoke access from Extuitive if you want it gone.
-
-Codex's `[features] skills = true` is a third case, handled conditionally. That flag is what
-lets Codex load skills at all — not just ours — so turning it off on the way out would silently
-disable every other skill you have. Uninstall offers to revert it only when nothing else is
-left in your skills directory, and otherwise says which skills it left it on for.
+to read or clear — on Codex that is the macOS keychain, keyed by server, so a reinstall later
+finds it and reports `Sign-in connected` without asking you again. Revoke access from
+Extuitive if you want it gone.
 
 Backups live outside the skills directories on purpose. Both hosts treat every directory in
 their skills root as a skill, and Codex searches it recursively, so a backup kept next to the
@@ -386,23 +453,23 @@ not contain one — everything an agent reads belongs in `SKILL.md` or `referenc
 `README.md` inside a skill folder is dead weight in its context window.
 
 Host-specific setup commands live only in `src/mcp-setup.mjs`, and every other per-host
-difference is a field in `src/hosts.mjs`. Nothing else branches on a host id. Two of those
-fields decide which code path a host takes rather than which words it prints: `skillDelivery`
-(`copy` for a host that scans a directory, `bundle` for one that takes an upload) and
-`mcpSetup` (`cli` for a host we can drive, `connector-ui` for one where the only supported
-route is a panel).
+difference — skills directory, previous skills directory, config file, which binary to run —
+is a field in `src/hosts.mjs`. Nothing else branches on a host id. Two of those fields decide
+which code path a host takes rather than which words it prints: `skillDelivery` (`copy` for a
+host that scans a directory, `bundle` for one that takes an upload) and `mcpSetup` (`cli` for
+a host we can drive, `connector-ui` for one where the only supported route is a panel).
 
 The skill never names a setup command; it tells the agent to run `doctor` and relay what it
 prints, so a change to a host's CLI is a fix in one file rather than four. The one exception
 is the connector URL, which the skill does name, because a host with no command line cannot
 be told to run `doctor` and a URL has nothing to go stale but its address.
 
-That file also decides the order of the last two steps. Sign-in and restart are printed in
-whichever order the host can actually do them: Claude Code signs in from inside a session, so
-it has to restart first, while Codex and Claude Desktop sign in outside one and restart
-afterwards to pick up the skills. Anything printed here should assume its reader is an agent, which will run a
-shell command it is shown — so a sign-in step that cannot survive being run that way does not
-belong in the output.
+`mcp-setup.mjs` also decides the order of the last two steps. Sign-in and new-session are
+printed in whichever order the host can actually do them: Claude Code signs in from inside a
+session, so the new session comes first, while Codex and Claude Desktop sign in outside one
+and open a new session afterwards for the tools. Anything printed here should assume its
+reader is an agent, which will run a shell command it is shown — so a sign-in step that cannot
+survive being run that way does not belong in the output.
 
 ## Licence
 

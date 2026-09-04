@@ -13,23 +13,30 @@
  *
  * Notable asymmetries, all load-bearing:
  *
- * - Claude Code reads skills from `~/.claude/skills`. Codex moved to `~/.agents/skills` and
- *   left `~/.codex/skills` behind as a legacy location it still scans, so an upgrade can
- *   leave a stale copy shadowing a new one. `legacyUserSkillsDir` exists so `doctor` can
- *   say that out loud.
- * - Codex hides skills behind an experimental feature flag. The Claude hosts have no
- *   equivalent, so `featureFlag` is null there rather than a no-op default.
- * - Codex reads skills once at startup. Claude Code picks up new ones live. That single
- *   fact decides whether install has to end by telling someone to restart.
+ * - Claude Code reads personal skills from `~/.claude/skills`. Codex scans two personal
+ *   locations, `$CODEX_HOME/skills` and `~/.agents/skills`, and loads from both. Codex's
+ *   own source calls the first one deprecated and the second current — but its bundled
+ *   `$skill-installer` still writes to `$CODEX_HOME/skills`, and so does every agent that
+ *   installs a skill from a URL. We install there so an Extuitive install lands where a
+ *   Codex user's other skills already are. Earlier versions of this installer used
+ *   `~/.agents/skills`; that is listed in `previousUserSkillsDirs` so install can migrate a
+ *   copy out of it and doctor can explain a duplicate. If Codex ever stops scanning
+ *   `$CODEX_HOME/skills`, swapping the two entries here is the whole change.
+ * - Codex picks up new and changed skills between turns (since 0.97). Claude Code does too,
+ *   and Claude Desktop reads them when a chat starts. None needs an application restart for
+ *   the skill itself, which is why `loadsSkillsAtStartup` is false everywhere — kept as data
+ *   rather than deleted so a host that regresses is a one-line fix.
  * - Every host connects MCP servers when a session starts, which is tracked separately from
- *   skills because on Claude Code the two differ: a skill copied in mid-session is live, the
- *   server registered alongside it is not.
+ *   skills because it is what actually decides whether install has to end by telling
+ *   someone to open a new session: the skill is live, the server it talks to is not.
+ * - The host CLI is resolved, not assumed. See `resolveCli` for why a `codex` on PATH is not
+ *   evidence that `codex` runs.
  */
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 
-import { commandExists } from "./exec.mjs";
+import { resolveCli } from "./exec.mjs";
 
 /** Everything this package keeps for itself: backups, and bundles built for upload. */
 export function stateRoot() {
@@ -37,9 +44,9 @@ export function stateRoot() {
 }
 
 /**
- * `CODEX_HOME` relocates everything Codex owns, including the config file the feature flag
- * lives in. Reading it at call time rather than at import keeps tests able to point a whole
- * run at a scratch directory.
+ * `CODEX_HOME` relocates everything Codex owns: its config file and, for us, its skills
+ * directory. Read at call time rather than at import so tests can point a whole run at a
+ * scratch directory.
  */
 function codexHome() {
   const configured = process.env.CODEX_HOME;
@@ -91,20 +98,63 @@ function appBundles(names) {
 export const HOST_IDS = ["claude", "codex", "claude-desktop"];
 
 /**
+ * Where a host's CLI might be, most specific first.
+ *
+ * An explicit `*_CLI_PATH` beats PATH, and PATH beats the desktop app bundles, which are
+ * checked last because they only exist on macOS and only when the app is installed. The
+ * bundle paths matter for exactly one case: a person who uses the Codex app and has never
+ * installed the CLI, or has a broken one on PATH, still has a working binary.
+ */
+function cliCandidates(id) {
+  if (id === "claude") {
+    return [process.env.CLAUDE_CLI_PATH, "claude"];
+  }
+  if (id === "codex") {
+    const candidates = [process.env.CODEX_CLI_PATH, "codex"];
+    if (platform() === "darwin") {
+      for (const root of ["/Applications", join(homedir(), "Applications")]) {
+        candidates.push(join(root, "Codex.app", "Contents", "Resources", "codex"));
+        candidates.push(join(root, "ChatGPT.app", "Contents", "Resources", "codex"));
+      }
+    }
+    return candidates;
+  }
+  return [];
+}
+
+/**
+ * Resolved once per process per host. Probing runs `--version`, which costs real time, and
+ * `getHost` is called from every module; without a cache a single install would spawn the
+ * CLI a dozen times to learn the same thing.
+ */
+const cliCache = new Map();
+
+const NO_CLI = { state: "none", path: null, detail: "This host has no CLI.", tried: [] };
+
+function resolvedCli(id) {
+  if (cliCache.has(id) === false) {
+    const candidates = cliCandidates(id);
+    cliCache.set(id, candidates.length === 0 ? NO_CLI : resolveCli(candidates));
+  }
+  return cliCache.get(id);
+}
+
+/**
  * @returns {{
  *   id: string,
  *   label: string,
  *   surfaces: string,
  *   cli: string | null,
+ *   cliCommand: string | null,
+ *   cliResolution: { state: "available" | "broken" | "missing" | "none", path: string | null, detail: string },
  *   skillDelivery: "copy" | "bundle",
  *   mcpSetup: "cli" | "connector-ui",
  *   supportsScope: boolean,
  *   userSkillsDir: string,
- *   legacyUserSkillsDir: string | null,
+ *   previousUserSkillsDirs: string[],
  *   projectSkillsDir: (cwd: string) => string,
  *   configPath: string | null,
  *   markerPaths: string[],
- *   featureFlag: { file: string, section: string, key: string } | null,
  *   loadsSkillsAtStartup: boolean,
  *   loadsMcpAtStartup: boolean,
  *   sessionNoun: string,
@@ -114,6 +164,7 @@ export const HOST_IDS = ["claude", "codex", "claude-desktop"];
  */
 export function getHost(id) {
   if (id === "claude") {
+    const cli = resolvedCli("claude");
     return {
       id: "claude",
       label: "Claude Code",
@@ -121,20 +172,21 @@ export function getHost(id) {
       // here is how that tab gets the skill. Its Chat and Cowork tabs do not.
       surfaces: "the claude CLI and the Code tab of the Claude Desktop app",
       cli: "claude",
+      // What to spawn and what to print. The bare name when PATH has a working one; the
+      // full path when only a fallback location did.
+      cliCommand: cli.state === "available" ? cli.path : "claude",
+      cliResolution: cli,
       skillDelivery: "copy",
       mcpSetup: "cli",
       supportsScope: true,
       userSkillsDir: join(claudeHome(), "skills"),
-      legacyUserSkillsDir: null,
+      previousUserSkillsDirs: [],
       projectSkillsDir: (cwd) => join(cwd, ".claude", "skills"),
       configPath: join(homedir(), ".claude.json"),
       markerPaths: [claudeHome()],
-      featureFlag: null,
-      // Project and personal skills are re-read as they change, so a fresh copy is live
-      // without a restart.
       loadsSkillsAtStartup: false,
-      // The server is not. Claude Code connects its MCP servers when a session starts, and
-      // `/mcp` lists only what the session connected to — so the session that ran the
+      // The server is not live. Claude Code connects its MCP servers when a session starts,
+      // and `/mcp` lists only what the session connected to — so the session that ran the
       // install cannot sign in to what the install just registered.
       loadsMcpAtStartup: true,
       sessionNoun: "session",
@@ -145,31 +197,29 @@ export function getHost(id) {
 
   if (id === "codex") {
     const home = codexHome();
+    const cli = resolvedCli("codex");
     return {
       id: "codex",
       // Not "Codex CLI". The Codex desktop app, the CLI and the IDE extension are one host
-      // wearing three faces: they share `~/.codex/config.toml` for MCP and all read user
-      // skills from `~/.agents/skills`, so a single install serves all three and a second
-      // host entry would only copy the same files over themselves.
+      // wearing three faces: they share `~/.codex/config.toml` for MCP and the same skills
+      // directories, so a single install serves all three and a second host entry would
+      // only copy the same files over themselves.
       label: "Codex",
       surfaces: "the Codex CLI, the Codex desktop app, and the IDE extension",
       cli: "codex",
+      cliCommand: cli.state === "available" ? cli.path : "codex",
+      cliResolution: cli,
       skillDelivery: "copy",
       mcpSetup: "cli",
       supportsScope: true,
-      // The current canonical location. Deliberately not under CODEX_HOME: the `.agents`
-      // convention is shared across tools, while CODEX_HOME only moves Codex's own state.
-      userSkillsDir: join(homedir(), ".agents", "skills"),
-      legacyUserSkillsDir: join(home, "skills"),
+      userSkillsDir: join(home, "skills"),
+      // Where this installer used to put the skill. Deliberately not under CODEX_HOME: the
+      // `.agents` convention is shared across tools and never moved with it.
+      previousUserSkillsDirs: [join(homedir(), ".agents", "skills")],
       projectSkillsDir: (cwd) => join(cwd, ".agents", "skills"),
       configPath: join(home, "config.toml"),
       markerPaths: [home, ...appBundles(["Codex.app", "ChatGPT.app"])],
-      featureFlag: {
-        file: join(home, "config.toml"),
-        section: "features",
-        key: "skills",
-      },
-      loadsSkillsAtStartup: true,
+      loadsSkillsAtStartup: false,
       loadsMcpAtStartup: true,
       sessionNoun: "session",
       invocationPrefix: "$",
@@ -188,6 +238,8 @@ export function getHost(id) {
       // No CLI at all, which is why every other field about driving this host describes a
       // panel rather than a command.
       cli: null,
+      cliCommand: null,
+      cliResolution: NO_CLI,
       // Chat-tab skills are account-bound and run in Anthropic's code execution container.
       // There is no directory on this machine to copy into: the Customize > Skills panel
       // takes a `.zip` and syncs it to the account, which is also why the skill then works
@@ -204,11 +256,10 @@ export function getHost(id) {
       // has nothing to mean here.
       supportsScope: false,
       userSkillsDir: join(stateRoot(), "bundles"),
-      legacyUserSkillsDir: null,
+      previousUserSkillsDirs: [],
       projectSkillsDir: () => join(stateRoot(), "bundles"),
       configPath: null,
       markerPaths: [claudeDesktopHome(), ...appBundles(["Claude.app"])],
-      featureFlag: null,
       // No application restart is in the way: an upload is live for new chats as soon as it
       // finishes, and a connector likewise. The open chat is what has the stale view, since
       // both are read when a chat starts.
@@ -235,24 +286,26 @@ export function allHosts() {
  * What we can tell about a host without asking the user.
  *
  * `cliAvailable` and `configPresent` are reported separately because they fail differently:
- * no CLI means we cannot register the MCP server for them and have to print the step, while
- * no state directory usually means the host was never run. Either alone is still enough to
- * install skills, since that is only file copying.
+ * no working CLI means we cannot register the MCP server for them and have to print the
+ * step, while no state directory usually means the host was never run. Either alone is
+ * still enough to install skills, since that is only file copying.
  *
  * A host with no CLI is `cliAvailable: false` permanently rather than by accident, and the
  * modules that would otherwise print "put it on your PATH" read `mcpSetup` to tell the two
- * cases apart.
+ * cases apart. A host whose CLI is found but does not run is `cliResolution.state ===
+ * "broken"`, which still counts as "this host is here": the person has it, we just cannot
+ * drive it.
  */
 export function detectHost(id) {
   const host = getHost(id);
-  const cliAvailable = host.cli === null ? false : commandExists(host.cli);
+  const cliAvailable = host.cliResolution.state === "available";
   const configPresent = host.markerPaths.some((path) => existsSync(path));
 
   return {
     host,
     cliAvailable,
     configPresent,
-    installed: cliAvailable || configPresent,
+    installed: cliAvailable || configPresent || host.cliResolution.state === "broken",
   };
 }
 
@@ -269,4 +322,29 @@ export function resolveSkillsRoot(host, { scope = "user", dir = null, cwd = proc
     return host.userSkillsDir;
   }
   return scope === "project" ? host.projectSkillsDir(cwd) : host.userSkillsDir;
+}
+
+/**
+ * Roots this installer wrote to in earlier versions, for the scope in question.
+ *
+ * Only a personal install to the default location has a history to migrate. A `--dir` or a
+ * project install names exactly one directory and a copy anywhere else is not ours to move.
+ */
+export function previousSkillsRoots(host, { scope = "user", dir = null } = {}) {
+  if (dir !== null || scope !== "user") {
+    return [];
+  }
+  return host.previousUserSkillsDirs.filter((root) => root !== host.userSkillsDir);
+}
+
+/** `~/...` for display, without pretending paths outside home are under it. */
+export function displayPath(path) {
+  const home = homedir();
+  if (path === home) {
+    return "~";
+  }
+  if (path.startsWith(`${home}/`) === true) {
+    return `~${path.slice(home.length)}`;
+  }
+  return path;
 }
