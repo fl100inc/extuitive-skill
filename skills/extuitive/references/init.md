@@ -1,9 +1,13 @@
-# `/extuitive init` — set Extuitive up
+# `/extuitive init` — set Extuitive up, or check that it is
 
-Gets a person from nothing to a working connection. Run only when asked, or when the
-Extuitive tools are missing from the session.
+Gets a person from nothing to a working connection, and doubles as the check: "is Extuitive
+connected?" is answered by walking the same three steps and reporting where they stop. Run
+when asked to set up or check the connection, or when the Extuitive tools are missing from
+the session.
 
-Work through the obstacles in order. Each has to be true before the next can be.
+Work through the obstacles in order. Each has to be true before the next can be. When asked
+only to check, say which step you got to and stop there; do not start fixing what was not
+asked about.
 
 ## 1. Is this host connected to the Extuitive MCP server?
 
@@ -41,10 +45,10 @@ while they work through it:
   waits for a redirect your shell cannot receive. Either way, running it produces a failure
   that reads as a broken install. Print the step and stop.
 - **The tools will not appear in this session.** Hosts connect MCP servers when a session
-  starts, so nothing registered while you have been running is visible to you, and on some
-  hosts skills are read once at startup too. Say so, and ask them to start a fresh session —
-  a new chat, in a desktop app — before checking. Retrying the tools here will not make them
-  exist.
+  starts, so nothing registered while you have been running is visible to you. (The skill
+  itself is different: hosts pick up new skills without a restart, which is why you are
+  reading this.) Say so, and ask them to start a fresh session — a new chat, in a desktop
+  app — before checking. Retrying the tools here will not make them exist.
 
 ## 2. Do they have an account?
 

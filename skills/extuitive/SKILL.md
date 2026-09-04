@@ -1,6 +1,6 @@
 ---
 name: extuitive
-description: Work with Extuitive, where each workspace is one Facebook ads account. Choose which ad account to work in, upload images and videos in bulk, check how an upload is going and which files were accepted, connect or repair a Meta connection, or set Extuitive up from scratch. Use when asked to upload, add, or import creative, ad images, ad videos, or a folder of assets into Extuitive, to check an Extuitive upload, to pick or switch which Extuitive workspace or ad account to work in, or when Extuitive tools are missing or refusing.
+description: Work with Extuitive, where each workspace is one Facebook ads account. Check that Extuitive is connected and signed in, choose which ad account to work in, upload images and videos in bulk, check how an upload is going and which files were accepted, connect or repair a Meta connection, or set Extuitive up from scratch. Use when asked to check the Extuitive connection or whether Extuitive is set up, to upload, add, or import creative, ad images, ad videos, or a folder of assets into Extuitive, to check an Extuitive upload, to pick or switch which Extuitive workspace or ad account to work in, or when Extuitive tools are missing or refusing.
 argument-hint: "[init | select | upload | upload-status | connect]"
 arguments: command
 ---
@@ -19,14 +19,19 @@ substitute arguments, work it out from what was actually asked instead.
 
 | Command | Read | For |
 | --- | --- | --- |
-| `init` | `references/init.md` | Nothing is set up yet, or the tools are missing |
+| `init` | `references/init.md` | Nothing is set up yet, the tools are missing, or "check my Extuitive connection" — is it set up, signed in, and working |
 | `select` | `references/select.md` | Choose which ad account the rest of this session works in |
 | `upload` | `references/upload.md` | Send local files into a workspace |
 | `upload-status` | `references/upload-status.md` | How is an upload going, what was accepted |
-| `connect` | `references/connect.md` | No workspaces, or ads data has gone stale |
+| `connect` | `references/connect.md` | No workspaces, or ads data has gone stale — the *Meta* connection |
 
 Anything else, or nothing at all: pick from the "For" column. An unrecognised command is
 worth one sentence — say what the five are — rather than a guess.
+
+"Connection" is ambiguous here, so route it by what is being asked about. Whether *this
+host* can reach Extuitive — tools present, signed in, workspaces listed — is `init`, which
+checks all three in order and hands off to `connect` itself if the only thing missing is a
+Meta connection. Whether a *workspace's* ads data is flowing is `connect`.
 
 `references/tools.md` documents every tool's arguments, the error vocabulary, and the status
 lifecycle. Reach for it when a call fails or a field is not what you expected.

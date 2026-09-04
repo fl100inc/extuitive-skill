@@ -15,15 +15,14 @@
  * announced success it had not verified would be wrong in exactly the case that matters.
  */
 import { DEFAULT_MCP_ENDPOINT, MCP_SERVER_NAME, NPX_COMMAND } from "./constants.mjs";
-import { detectHosts } from "./hosts.mjs";
+import { detectHosts, displayPath } from "./hosts.mjs";
 import {
   backupsRoot,
-  findLegacyCopies,
   findShadowingBackups,
   inspectInstalledSkills,
   inspectSkillBundles,
 } from "./install.mjs";
-import { authInstructions, readFeatureFlag, restartNotice, statusCommand } from "./mcp-setup.mjs";
+import { authInstructions, serverAvailabilityNotice, statusCommand } from "./mcp-setup.mjs";
 import { run } from "./exec.mjs";
 
 /**
@@ -108,12 +107,108 @@ function namesOurServer(line) {
 }
 
 /**
+ * The columns of a fixed-width table row, cut where the header says they start.
+ *
+ * `codex mcp list` prints a table (`Name  Command  Args  Env  Cwd  Status  Auth`) whose
+ * columns are padded to the widest value, so a row cannot be split on whitespace — an env
+ * column full of `KEY=*****, KEY=*****` would swallow the ones after it. The header's
+ * column starts are the only reliable cut points. Returns null when there is no header to
+ * cut by, and the caller falls back to reading the row as prose.
+ */
+function tableColumns(lines, row) {
+  const header = lines.find((line) => /^\s*Name\s+/.test(line) && /\bStatus\b/.test(line));
+  if (header === undefined) {
+    return null;
+  }
+
+  const names = [...header.matchAll(/\S+/g)];
+  const columns = {};
+  for (const [index, match] of names.entries()) {
+    const start = match.index;
+    const end = index + 1 < names.length ? names[index + 1].index : row.length;
+    columns[match[0].toLowerCase()] = row.slice(start, end).trim();
+  }
+  return columns;
+}
+
+/**
+ * Codex's auth vocabulary, from `McpAuthStatus` in its source, mapped onto ours.
+ *
+ * `OAuth` means a usable token is stored, i.e. signed in — not "uses OAuth". `NotLoggedIn`
+ * means the server advertises OAuth and no token is stored. `BearerToken` is a static header
+ * and counts as signed in. `Unsupported` is what a server with no auth at all reports, and
+ * also what a disabled one reports, so on its own it says nothing about sign-in. Accepts
+ * both the table's `OAuth`/`NotLoggedIn` spelling and `--json`'s `o_auth`/`not_logged_in`.
+ */
+function describeCodexAuth(raw) {
+  const auth = String(raw).toLowerCase().replace(/[\s_-]/g, "");
+  if (auth === "notloggedin") {
+    return { state: "needs_auth", detail: "registered, not signed in" };
+  }
+  if (auth === "oauth" || auth === "bearertoken") {
+    return { state: "connected", detail: "registered, signed in" };
+  }
+  return { state: "registered", detail: `registered (auth: ${raw || "unknown"})` };
+}
+
+/**
+ * `codex mcp list --json`, which is the one host status we can read without guessing.
+ *
+ * Returns null when the flag is not supported or the output is not JSON, so the caller falls
+ * back to the table. Anything else — including "the server is not in the list" — is a real
+ * answer and is returned as one.
+ */
+function readCodexServerStatusJson(host, command, args) {
+  const result = run(command, [...args, "--json"], { timeoutMs: 20_000 });
+  if (result.spawnError === true || result.ok === false) {
+    return null;
+  }
+
+  let entries;
+  try {
+    entries = JSON.parse(result.stdout);
+  } catch {
+    return null;
+  }
+  if (Array.isArray(entries) === false) {
+    return null;
+  }
+
+  const entry = entries.find((candidate) => String(candidate?.name ?? "").toLowerCase() === MCP_SERVER_NAME);
+  if (entry === undefined) {
+    const lookalike = entries.find((candidate) =>
+      String(candidate?.name ?? "").toLowerCase().includes(MCP_SERVER_NAME),
+    );
+    return {
+      state: "absent",
+      detail: `${host.label} has no server named ${MCP_SERVER_NAME}.`,
+      lookalike: lookalike === undefined ? null : String(lookalike.name),
+    };
+  }
+
+  if (entry.enabled === false) {
+    return {
+      state: "disabled",
+      detail: entry.disabled_reason ? `disabled: ${entry.disabled_reason}` : "disabled",
+      entry,
+    };
+  }
+  return { ...describeCodexAuth(entry.auth_status ?? ""), entry };
+}
+
+/**
  * The host's own view of the server.
  *
  * Parsed from human-readable output, so it is written to degrade rather than mislead: a line
  * naming the server is enough to say it is registered, and only clear signals move it to
- * `needs_auth` or `failed`. Anything unrecognized stays `registered`, because "we could not
- * read the status" must not be reported as "it is broken".
+ * `needs_auth`, `connected`, `disabled` or `failed`. Anything unrecognized stays
+ * `registered`, because "we could not read the status" must not be reported as "it is
+ * broken".
+ *
+ * A CLI that cannot be run at all is `unknown`, never `absent`. The earlier version got this
+ * wrong for a broken `codex` shim: the spawn failure printed nothing that named the server,
+ * so the server was reported missing and the fix offered was to register it again — with the
+ * same broken binary.
  */
 export function readHostServerStatus(host, { cliAvailable }) {
   // Distinct from `unknown`, which means "we could not read it this time". This one will
@@ -127,10 +222,24 @@ export function readHostServerStatus(host, { cliAvailable }) {
   }
 
   if (cliAvailable === false) {
-    return { state: "unknown", detail: `${host.cli} is not on PATH.` };
+    return {
+      state: "unknown",
+      detail:
+        host.cliResolution.state === "broken"
+          ? host.cliResolution.detail
+          : `${host.cli} is not on PATH, so the registration cannot be checked from here.`,
+    };
   }
 
   const { command, args } = status;
+
+  if (host.id === "codex") {
+    const structured = readCodexServerStatusJson(host, command, args);
+    if (structured !== null) {
+      return structured;
+    }
+  }
+
   const result = run(command, args, { timeoutMs: 20_000 });
 
   if (result.spawnError === true) {
@@ -150,6 +259,20 @@ export function readHostServerStatus(host, { cliAvailable }) {
       detail: `${host.label} has no server named ${MCP_SERVER_NAME}.`,
       lookalike: lookalike === undefined ? null : lookalike.trim(),
     };
+  }
+
+  // Prefer the table's own columns when there are any. `Status` is enabled/disabled and
+  // `Auth` is the sign-in state, and reading them by position means an env var containing
+  // the word "failed" cannot be mistaken for the server having failed.
+  const columns = tableColumns(lines, line);
+  if (columns !== null && (columns.status !== undefined || columns.auth !== undefined)) {
+    const status = (columns.status ?? "").toLowerCase();
+    const summary = [columns.status, columns.auth].filter((part) => part).join(", ");
+
+    if (status.includes("disabled") === true) {
+      return { state: "disabled", detail: summary, columns };
+    }
+    return { ...describeCodexAuth(columns.auth ?? ""), columns, detail: summary };
   }
 
   const lowered = line.toLowerCase();
@@ -212,14 +335,21 @@ export async function diagnoseHost(detection, options = {}) {
     ? await inspectSkillBundles(host, { dir, cwd })
     : await inspectInstalledSkills(host, { scope, dir, cwd });
   const skills = bundled === true ? bundleSummary(inspection) : skillSummary(inspection);
-  const featureFlag = await readFeatureFlag(host);
-  const legacy = await findLegacyCopies(host);
+  const previous = inspection.previous ?? [];
   const shadowingBackups = await findShadowingBackups(host, { scope, dir, cwd });
   const server = readHostServerStatus(host, { cliAvailable });
 
   const problems = [];
 
-  if (skills.state === "absent") {
+  if (skills.state === "absent" && previous.length > 0) {
+    // It loads from there, so this is not blocking — but a later install would create a
+    // duplicate, and the person should know the location changed before that happens.
+    problems.push({
+      what: `Extuitive is installed at its previous location (${displayPath(previous[0].path)}). It still loads from there.`,
+      fix: `Move it to ${displayPath(inspection.destinationRoot)} with: ${NPX_COMMAND} update`,
+      advisory: true,
+    });
+  } else if (skills.state === "absent") {
     problems.push({
       what: bundled === true
         ? `No skill bundle built for ${host.label} in ${inspection.destinationRoot}.`
@@ -256,15 +386,6 @@ export async function diagnoseHost(detection, options = {}) {
     });
   }
 
-  if (featureFlag.required === true && featureFlag.enabled === false) {
-    problems.push({
-      what: featureFlag.present === true
-        ? `Skills are turned off in ${featureFlag.path} (skills = false).`
-        : `Skills are not enabled in ${featureFlag.path}. Codex keeps them behind an experimental flag.`,
-      fix: `Add to ${featureFlag.path}:\n  [features]\n  skills = true\nor rerun install with --write-config.`,
-    });
-  }
-
   for (const path of shadowingBackups) {
     problems.push({
       what: `A backup directory is sitting in the skills root (${path}). ${host.label} scans everything there, so it loads as a second, older skill.`,
@@ -272,10 +393,25 @@ export async function diagnoseHost(detection, options = {}) {
     });
   }
 
-  for (const copy of legacy) {
+  if (skills.state !== "absent") {
+    for (const copy of previous) {
+      problems.push({
+        what: `A second copy of ${copy.name} is at Extuitive's previous install location (${displayPath(copy.path)}). ${host.label} scans both, so the skill appears twice and the older body may be the one read.`,
+        fix: `Migrate it (backs up anything that differs): ${NPX_COMMAND} update\nor remove it: rm -rf ${copy.path}`,
+      });
+    }
+  }
+
+  if (server.state === "unknown" && cliAvailable === false) {
     problems.push({
-      what: `A stale copy of ${copy.name} is in Codex's legacy skills directory (${copy.path}). Both locations are scanned, so this can shadow the current one.`,
-      fix: `Remove it: rm -rf ${copy.path}`,
+      what:
+        host.cliResolution.state === "broken"
+          ? `The ${host.cli} command does not run: ${host.cliResolution.detail}`
+          : `The ${host.cli} command is not on PATH, so the MCP registration cannot be checked or changed from here.`,
+      fix:
+        host.cliResolution.state === "broken"
+          ? `Reinstall the ${host.label} CLI, or point at a working one: CODEX_CLI_PATH=/path/to/codex ${NPX_COMMAND} doctor`
+          : `Install the ${host.label} CLI, or register the server by hand — see: ${NPX_COMMAND} install`,
     });
   }
 
@@ -298,7 +434,14 @@ export async function diagnoseHost(detection, options = {}) {
       // The restart is part of the fix, not a footnote to it: on Claude Code the sign-in
       // panel is only reachable from a session that already connected to the server.
       fix:
-        auth.inSession === true ? `${restartNotice(host)}\nThen: ${auth.primary}` : auth.primary,
+        auth.inSession === true
+          ? `${serverAvailabilityNotice(host)}\nThen: ${auth.primary}`
+          : auth.primary,
+    });
+  } else if (server.state === "disabled") {
+    problems.push({
+      what: `${host.label} has the server but it is disabled (${server.detail}).`,
+      fix: `Enable it in ${host.configPath}, or remove and re-add it: ${NPX_COMMAND} install`,
     });
   } else if (server.state === "failed") {
     problems.push({
@@ -317,13 +460,19 @@ export async function diagnoseHost(detection, options = {}) {
   }
 
   // Raised for every host, because the failure it explains is the same everywhere:
-  // everything below reads healthy and the session still has no Extuitive tools. Doctor
-  // cannot tell whether a restart has already happened — it runs in a shell, not in the
-  // session — so it says the fact and leaves the "if you have not" to the reader.
-  if (["installed", "built"].includes(skills.state) === true && server.state !== "absent") {
+  // everything reads healthy and the session still has no Extuitive tools. Doctor cannot
+  // tell whether a new session has been started since — it runs in a shell, not in the
+  // session — so it says the fact and leaves the "if you have not" to the reader. The skill
+  // itself needs no restart on any host, which is why this speaks only of the server.
+  // Not raised alongside `needs_auth`, whose fix already says it.
+  const settled = ["registered", "connected", "unverifiable"].includes(server.state);
+  if (["installed", "built"].includes(skills.state) === true && settled === true) {
     problems.push({
-      what: restartNotice(host),
-      fix: `Start a new ${host.label} ${host.sessionNoun} if you have not since installing.`,
+      what:
+        server.state === "connected"
+          ? `${host.label} connects MCP servers when a ${host.sessionNoun} starts, so a ${host.sessionNoun} older than this registration or sign-in does not have the Extuitive tools.`
+          : serverAvailabilityNotice(host),
+      fix: `If the Extuitive tools are not in your current ${host.sessionNoun}, start a new ${host.label} ${host.sessionNoun}.`,
       advisory: true,
     });
   }
@@ -331,12 +480,12 @@ export async function diagnoseHost(detection, options = {}) {
   return {
     host,
     cliAvailable,
+    cliResolution: host.cliResolution,
     configPresent,
     skillsRoot: inspection.destinationRoot,
     skills,
     inspection,
-    featureFlag,
-    legacy,
+    previous,
     shadowingBackups,
     server,
     problems,

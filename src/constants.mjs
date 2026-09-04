@@ -44,3 +44,14 @@ export const SKILL_NAMES = ["extuitive"];
 
 /** The subcommands the skill routes, used for the usage text and nothing else. */
 export const SKILL_COMMANDS = ["init", "select", "upload", "upload-status", "connect"];
+
+/**
+ * What to suggest typing once the install is done.
+ *
+ * Natural language rather than `$extuitive init`, because that is how the skill is meant to
+ * be reached and because the slash-vs-dollar prefix differs by host. The first one routes to
+ * `init`, which verifies the connection end to end and is the right first thing to do; the
+ * second is the job most people installed it for. Both phrases appear in SKILL.md's
+ * description so the host's skill matcher recognises them.
+ */
+export const EXAMPLE_PROMPTS = ["Check my Extuitive connection", "Upload these images to Extuitive"];

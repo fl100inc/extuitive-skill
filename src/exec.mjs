@@ -7,6 +7,7 @@
  * shell string can.
  */
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 
 /**
  * Whether a command is runnable, by asking the OS rather than guessing from a path.
@@ -22,6 +23,71 @@ export function commandExists(command) {
     shell: false,
   });
   return result.status === 0;
+}
+
+/**
+ * Find a CLI that actually runs, out of several places it might be.
+ *
+ * "On PATH" is not the same as "works". On this very machine `which codex` finds an npm
+ * wrapper whose vendored binary is missing, and every invocation dies with `spawn … ENOENT`
+ * while the real, working `codex` sits inside the Codex desktop app bundle. An installer
+ * that trusted `which` would register nothing and then report the server as "not
+ * registered" rather than "could not ask" — the wrong diagnosis with the wrong fix.
+ *
+ * So each candidate is run with `--version` first. Bare names are looked up on PATH; absolute
+ * paths are checked for existence. The first candidate that exits 0 wins and is what every
+ * later command spawns. If none work, the distinction between "found but broken" and "not
+ * found anywhere" is preserved, because doctor needs to say which.
+ *
+ * Returns `{ state: "available" | "broken" | "missing", path, detail, tried }`. For a bare
+ * name that works, `path` is the bare name, so printed commands stay short.
+ */
+export function resolveCli(candidates, { timeoutMs = 5_000 } = {}) {
+  const tried = [];
+  let firstBroken = null;
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || candidate.trim() === "") {
+      continue;
+    }
+
+    const isBare = candidate.includes("/") === false && candidate.includes("\\") === false;
+    if (isBare === true && commandExists(candidate) === false) {
+      tried.push({ path: candidate, state: "missing" });
+      continue;
+    }
+    if (isBare === false && existsSync(candidate) === false) {
+      tried.push({ path: candidate, state: "missing" });
+      continue;
+    }
+
+    const probe = run(candidate, ["--version"], { timeoutMs });
+    if (probe.ok === true) {
+      tried.push({ path: candidate, state: "available" });
+      return {
+        state: "available",
+        path: candidate,
+        detail: `${probe.stdout.trim() || probe.stderr.trim()}`.split("\n")[0],
+        tried,
+      };
+    }
+
+    const detail = (probe.stderr || probe.stdout).trim().split("\n")[0] || `exit ${probe.status}`;
+    tried.push({ path: candidate, state: "broken", detail });
+    if (firstBroken === null) {
+      firstBroken = { path: candidate, detail };
+    }
+  }
+
+  if (firstBroken !== null) {
+    return {
+      state: "broken",
+      path: firstBroken.path,
+      detail: `${firstBroken.path} is present but does not run: ${firstBroken.detail}`,
+      tried,
+    };
+  }
+  return { state: "missing", path: null, detail: "Not found on PATH or in any known location.", tried };
 }
 
 /**
