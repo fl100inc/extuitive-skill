@@ -286,9 +286,10 @@ sends bytes, and reports ETags. Your access token stays in your host's credentia
 
 ## Tools
 
-Fourteen tools in three groups. Full schemas, the error vocabulary, and the status lifecycle
-are in
-[`skills/extuitive/references/tools.md`](skills/extuitive/references/tools.md).
+Twenty-nine tools in four groups. Full schemas, the error vocabulary, and the status lifecycle
+for the first three groups are in
+[`skills/extuitive/references/tools.md`](skills/extuitive/references/tools.md); the Meta object
+tools carry their own schemas in the server's tool listing.
 
 **Workspaces**
 
@@ -314,6 +315,30 @@ are in
 - `get_upload_batch_content` *(workspaceId, batchId)* — per-file rows and status for one batch.
 - `get_upload_content` *(workspaceId, contentId)* — one file.
 - `create_browser_upload_link` *(workspaceId)* — hand the transfer back to the browser.
+
+**Meta objects**
+
+Build and inspect campaigns in the workspace's connected ad account. Creates are submitted as
+actions and settle asynchronously; `get_meta_action` is the only way to learn whether one worked.
+
+- `create_meta_campaign` *(workspaceId, params, summary, rationale, clientToken)* — step one of four.
+- `create_meta_adset` *(workspaceId, params, …)* — step two; needs a `campaign_id`.
+- `create_meta_adcreative` *(workspaceId, params, …)* — step three; needs a `page_id` from
+  `list_meta_pages` and media already `PUBLISHED` through the upload tools.
+- `create_meta_ad` *(workspaceId, params, …)* — step four; needs an `adset_id` and a `creative_id`.
+  An ad that is not `PAUSED` starts spending as soon as Meta approves it.
+- `get_meta_action` *(workspaceId, actionId)* — poll until `settled`; `EXECUTED` carries the new
+  object's `createdId`, `FAILED` carries Meta's own error.
+- `list_meta_actions` *(workspaceId)* — everything created through these tools, newest first.
+- `list_meta_campaigns` / `list_meta_adsets` / `list_meta_ads` *(workspaceId, filters, paging)* —
+  read live from Meta, for finding ids of objects that already exist.
+- `get_meta_campaign` / `get_meta_adset` / `get_meta_ad` *(workspaceId, id)* — the full settings
+  of one object, including ad set targeting.
+- `list_meta_pages` *(workspaceId)* — pages this workspace can run ads as.
+- `list_meta_pixels` *(workspaceId)* — conversion pixels, with `lastFiredTime` so you can avoid
+  a dead one.
+- `list_meta_instagram_accounts` *(workspaceId)* — Instagram accounts the ad account may
+  advertise as. Optional; a creative runs on Facebook with a `page_id` alone.
 
 ## The MCP server
 
