@@ -38,9 +38,12 @@ import {
 } from "../src/install.mjs";
 import {
   authInstructions,
+  describeDuration,
   manualSteps,
   registerMcpServer,
+  registrationIncludesSignIn,
   serverAvailabilityNotice,
+  SIGN_IN_TIMEOUT_MS,
   skillAvailabilityNotice,
   unregisterMcpServer,
 } from "../src/mcp-setup.mjs";
@@ -253,6 +256,15 @@ function signInState(host, { registration, server }) {
   if (["skipped_dry_run", "cli_missing", "cli_broken", "failed"].includes(registration.status)) {
     return { state: "after_registration", instruction, inSession: auth.inSession };
   }
+  // What we watched happen outranks what the host's list command says afterwards. Codex
+  // signs in as part of `mcp add`, and its `mcp list` may still say "Unknown" for a token it
+  // wrote a moment ago; a "Successfully logged in." we saw printed is the better witness.
+  if (registration.signIn?.state === "completed") {
+    return { state: "connected", instruction, inSession: auth.inSession, detail: registration.signIn.detail };
+  }
+  if (registration.signIn?.state === "interrupted" || typeof registration.signIn?.detail === "string") {
+    return { state: "needed", instruction, inSession: auth.inSession, detail: registration.signIn.detail };
+  }
   if (server?.state === "connected") {
     return { state: "connected", instruction, inSession: auth.inSession };
   }
@@ -291,6 +303,40 @@ async function placeSkills(host, options) {
 }
 
 /**
+ * What to say, and what to echo, while a registration that opens a browser is running.
+ *
+ * Codex's `mcp add --url` writes the config and then opens the person's browser to sign in,
+ * and does not return until they have. That has to be announced *before* it runs — a browser
+ * tab appearing mid-install with no explanation reads as something going wrong — and Codex's
+ * own output has to be shown as it arrives, because it contains the authorize URL for anyone
+ * whose browser did not open, and the "Successfully logged in." that tells them they can
+ * come back to the terminal.
+ *
+ * Nothing is printed in `--json` mode (the output must stay parseable) or in a dry run
+ * (nothing opens), and the announcement is skipped when the CLI is missing, since then
+ * nothing will be run.
+ */
+function registrationProgress(host, options, cliAvailable) {
+  if (
+    registrationIncludesSignIn(host) === false ||
+    options.json === true ||
+    options.dryRun === true ||
+    cliAvailable === false
+  ) {
+    return {};
+  }
+
+  console.log(`\nRegistering the MCP server with ${host.label}.`);
+  console.log(`${host.label} will open your browser to sign in to Extuitive as part of this step.`);
+  console.log("Finish there — create an account and connect Meta if you need to — then come back.");
+  console.log(`Waiting up to ${describeDuration(SIGN_IN_TIMEOUT_MS)} for that. If nothing opens, use the URL ${host.cli} prints below.\n`);
+
+  return {
+    onLine: (line) => console.log(`  ${host.cli} │ ${line}`),
+  };
+}
+
+/**
  * Everything install or update does for one host, returned rather than printed.
  *
  * `update` differs from `install` in one decision only: it asks the host whether the server
@@ -306,6 +352,15 @@ async function setupHost(host, detection, options, { mode }) {
   let server = null;
   let registration;
 
+  const register = () =>
+    registerMcpServer(host, {
+      endpoint: options.endpoint,
+      scope: options.scope,
+      dryRun: options.dryRun,
+      cliAvailable,
+      ...registrationProgress(host, options, cliAvailable),
+    });
+
   if (host.mcpSetup === "connector-ui") {
     // No side effects on either path: registration is a list of steps and the status is
     // "cannot be read from here". Asked the same way in both modes so the summary is too.
@@ -314,22 +369,12 @@ async function setupHost(host, detection, options, { mode }) {
   } else if (mode === "update") {
     server = readHostServerStatus(host, { cliAvailable });
     if (server.state === "absent") {
-      registration = await registerMcpServer(host, {
-        endpoint: options.endpoint,
-        scope: options.scope,
-        dryRun: options.dryRun,
-        cliAvailable,
-      });
+      registration = await register();
     } else {
       registration = { status: server.state === "unknown" ? "unknown" : "already_registered", command: null };
     }
   } else {
-    registration = await registerMcpServer(host, {
-      endpoint: options.endpoint,
-      scope: options.scope,
-      dryRun: options.dryRun,
-      cliAvailable,
-    });
+    registration = await register();
     // Asked even after a fresh registration, because a token from an earlier install may
     // still be in the host's credential store — Codex keeps them in the keychain, keyed by
     // server, and removing the server does not remove the token. Saying "sign in" to someone
@@ -472,11 +517,16 @@ function printServerRow(host, report) {
 function printSignInRow(report) {
   const { signIn } = report;
   if (signIn.state === "connected") {
-    row("Sign-in", "connected", report.server?.detail ?? "");
+    row("Sign-in", "connected", signIn.detail ?? report.server?.detail ?? "");
     return;
   }
   if (signIn.state === "needed") {
     row("Sign-in", "needed", signIn.instruction);
+    if (signIn.detail !== undefined) {
+      // The registration started this sign-in and it did not finish. Said explicitly, since
+      // the person just watched a browser open and may reasonably think it worked.
+      cont(signIn.detail);
+    }
   } else if (signIn.state === "in_app") {
     row("Sign-in", "in the app", signIn.instruction);
   } else if (signIn.state === "after_registration") {
@@ -505,7 +555,7 @@ function printSummary(host, report, options) {
   } else if (report.registration.status === "manual_only") {
     console.log(`  ${report.availability.skill} ${report.availability.server}`);
   } else if (report.signIn.state === "connected") {
-    console.log(`  ${report.availability.skill} The Extuitive tools are connected.`);
+    console.log(`  ${report.availability.skill} You are signed in; the Extuitive tools appear in a new ${host.label} ${host.sessionNoun}.`);
   } else if (serverRegistered === true) {
     console.log(`  ${report.availability.skill} ${report.availability.server}`);
   } else {

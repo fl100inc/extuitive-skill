@@ -45,12 +45,23 @@ Codex — the Codex CLI, the Codex desktop app, and the IDE extension
   Skill       installed      ~/.codex/skills/extuitive
                              /Users/you/.codex/skills/extuitive/SKILL.md
   MCP server  registered     codex mcp add extuitive --url https://www.extuitive.com/mcp
-  Sign-in     needed         codex mcp login extuitive
-                             Opens a browser; only you can complete it.
+  Sign-in     connected      signed in during registration
 
-  The skill is available on your next turn. Codex connects MCP servers when a session
-  starts, so the Extuitive tools appear in a new session once you have signed in.
+  The skill is available on your next turn. You are signed in; the Extuitive tools appear
+  in a new Codex session.
   Try: "Check my Extuitive connection"  ·  "Upload these images to Extuitive"
+```
+
+On Codex the sign-in is part of the `codex mcp add` step — it opens the person's browser and
+the installer waits for them — so `Sign-in` usually reads `connected` by the time the block
+prints. When the browser flow was closed or ran out of time it reads `needed` instead, with the
+command that finishes it:
+
+```
+  Sign-in     needed         codex mcp login extuitive
+                             codex opened a browser sign-in during registration, but it
+                             was not completed within 10 minutes.
+                             Opens a browser; only you can complete it.
 ```
 
 Three facts on three lines, each with its own state, so the summary an agent gives back can be
@@ -58,7 +69,7 @@ short and still true:
 
 > Installed [Extuitive](/Users/you/.codex/skills/extuitive/SKILL.md) in `~/.codex/skills/extuitive`.
 > The skill will be available on your next turn.
-> Sign in with `codex mcp login extuitive`, then start a new session for the Extuitive tools.
+> You are signed in; start a new session for the Extuitive tools.
 > Try: "Check my Extuitive connection."
 
 If you are the agent doing the install, four rules:
@@ -68,6 +79,11 @@ If you are the agent doing the install, four rules:
 - **Report the `Sign-in` line as printed and never run it.** `codex mcp login` opens a browser
   and waits for a redirect your shell cannot receive; `/mcp` belongs to the person's session.
   When it reads `connected`, say so and skip the instruction.
+- **On Codex, expect the install to wait for a browser sign-in.** `codex mcp add` opens the
+  person's browser and does not return until they have signed in, and the installer waits up to
+  ten minutes for that — so tell the person a browser tab is coming and do not kill the command
+  for being slow. If it is cut off anyway, the server is still registered; run
+  `npx extuitive doctor` to see where things stand rather than re-running `install`.
 - **Say what is available when.** The skill is live now (Codex: next turn; Claude Code:
   immediately; Claude Desktop: once uploaded, in new chats). The Extuitive *tools* are not:
   every host connects MCP servers when a session starts, so they appear in a new session, and
@@ -169,9 +185,17 @@ Which does:
 codex mcp add extuitive --url https://www.extuitive.com/mcp
 ```
 
-Then `codex mcp login extuitive` to sign in. The skill itself is picked up on your next turn;
-the Extuitive **tools** appear in a new Codex session, because MCP servers are connected when
-a session starts.
+**The sign-in happens inside that `add`.** Codex writes the config, notices the endpoint
+supports OAuth, and opens your browser on the spot — there is no flag to add without logging
+in. The installer says so before it runs, echoes Codex's output as it goes (including the
+authorize URL, in case no browser opens), and waits up to ten minutes for you to finish: long
+enough to create an Extuitive account and connect Meta on the way. Once you are back in the
+terminal the `Sign-in` line reads `connected`. If the browser flow was closed or timed out,
+the server is still registered — the config was written in the first second — and the line
+reads `needed` with `codex mcp login extuitive` to finish the sign-in on its own.
+
+The skill itself is picked up on your next turn; the Extuitive **tools** appear in a new Codex
+session, because MCP servers are connected when a session starts.
 
 **This is one install for three programs.** The Codex desktop app, the CLI and the IDE
 extension share `~/.codex/config.toml` for MCP and the same skills directories, so there is

@@ -24,7 +24,32 @@
  * `connectorSteps` for why its config file is left alone even as a fallback.
  */
 import { DEFAULT_MCP_ENDPOINT, MCP_SERVER_NAME, NPX_COMMAND } from "./constants.mjs";
-import { formatCommand, run } from "./exec.mjs";
+import { formatCommand, run, runStreaming } from "./exec.mjs";
+
+/**
+ * How long to wait for a registration that includes a browser sign-in.
+ *
+ * Sized to a person, not a process. Someone signing in for the first time is creating an
+ * Extuitive account, connecting Meta, and picking an ad account before the browser ever
+ * redirects back — a 30-second limit was cut mid-flow and reported "not added" over a
+ * registration that had already been written. Ten minutes is long enough that hitting it
+ * means the tab was closed, and short enough that a closed tab is not an install that never
+ * ends.
+ */
+export const SIGN_IN_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * Whether registering the server on this host also signs the person in, in the same command.
+ *
+ * True for Codex: `codex mcp add --url` writes the config, discovers that the endpoint
+ * supports OAuth, and starts the login on the spot — it opens a browser and waits for the
+ * redirect. There is no flag to add without logging in. Callers use this to warn before
+ * running that a browser is about to open, and to keep the command running while the person
+ * is in it.
+ */
+export function registrationIncludesSignIn(host) {
+  return host.id === "codex" && host.mcpSetup === "cli";
+}
 
 /**
  * The command that registers the server.
@@ -272,9 +297,24 @@ export function manualConfigSnippet(host, { endpoint = DEFAULT_MCP_ENDPOINT } = 
  * `cli_missing` and `cli_broken` are different statuses because they have different fixes:
  * one person has to install the CLI, the other has one that does not run and should be told
  * which file it is.
+ *
+ * On a host where registration includes the sign-in (see `registrationIncludesSignIn`), the
+ * command is run with `onLine` echoing its output as it goes and a timeout sized for a
+ * person, and the result carries a `signIn` field: `completed`, `interrupted` (the browser
+ * flow was started but the command ended before it finished), or `not_started`. The
+ * registration itself is judged by what the CLI printed, not by whether the whole command
+ * exited cleanly — the config is written in the first second, and a sign-in that timed out
+ * or was declined does not unwrite it.
  */
 export async function registerMcpServer(host, options = {}) {
-  const { endpoint = DEFAULT_MCP_ENDPOINT, scope = "user", dryRun = false, cliAvailable } = options;
+  const {
+    endpoint = DEFAULT_MCP_ENDPOINT,
+    scope = "user",
+    dryRun = false,
+    cliAvailable,
+    onLine = null,
+    signInTimeoutMs = SIGN_IN_TIMEOUT_MS,
+  } = options;
 
   // Not a degraded outcome and not a failure — it is how this host is set up, every time.
   // Kept distinct from `cli_missing` so callers can say "here is what to click" instead of
@@ -299,6 +339,10 @@ export async function registerMcpServer(host, options = {}) {
     return { status: "skipped_dry_run", command: rendered };
   }
 
+  if (registrationIncludesSignIn(host) === true) {
+    return registerWithSignIn(host, { command, args, rendered, endpoint, onLine, signInTimeoutMs });
+  }
+
   const timeoutMs = 30_000;
   const result = run(command, args, { timeoutMs });
   if (result.ok === true) {
@@ -319,8 +363,7 @@ export async function registerMcpServer(host, options = {}) {
   // Adding a server that is already configured is a refusal, not a problem: the desired end
   // state is the one we already have. Detected by message because neither CLI gives it a
   // distinct exit code.
-  const output = `${result.stdout}\n${result.stderr}`.toLowerCase();
-  if (output.includes("already exists") === true || output.includes("already configured") === true) {
+  if (saysAlreadyRegistered(result) === true) {
     return { status: "already_registered", command: rendered };
   }
 
@@ -330,6 +373,110 @@ export async function registerMcpServer(host, options = {}) {
     detail: (result.stderr || result.stdout).trim(),
     manual: manualConfigSnippet(host, { endpoint }),
   };
+}
+
+function saysAlreadyRegistered(result) {
+  const output = `${result.stdout}\n${result.stderr}`.toLowerCase();
+  return output.includes("already exists") === true || output.includes("already configured") === true;
+}
+
+/**
+ * The phrases Codex prints at each stage of `mcp add --url`, read from its source rather
+ * than guessed. Matched case-insensitively and loosely on purpose: the exact wording is
+ * Codex's to change, and a missed match here degrades to "unverified", not to a wrong claim.
+ */
+const CODEX_ADDED = /added (global )?mcp server/i;
+const CODEX_SIGN_IN_STARTED = /starting oauth flow|open(ing)? this url in your browser/i;
+const CODEX_SIGNED_IN = /successfully logged in/i;
+
+/**
+ * Register on a host whose `add` also runs the browser sign-in.
+ *
+ * Three outcomes have to be told apart, and the exit code alone cannot do it:
+ *
+ * - Exit 0: registered and signed in, in one go.
+ * - Printed "Added" and then timed out, or exited non-zero after starting the sign-in: the
+ *   registration is on disk; the sign-in is what did not finish. That is a *success* for
+ *   the registration and a clear next step for the sign-in, not a failure to be fixed by
+ *   pasting TOML — pasting TOML would produce exactly the state already there.
+ * - Never printed "Added": the add itself failed, and the manual snippet is the right offer.
+ */
+async function registerWithSignIn(host, { command, args, rendered, endpoint, onLine, signInTimeoutMs }) {
+  const result = await runStreaming(command, args, { timeoutMs: signInTimeoutMs, onLine });
+  const output = `${result.stdout}\n${result.stderr}`;
+
+  const added = CODEX_ADDED.test(output) === true;
+  const signInStarted = CODEX_SIGN_IN_STARTED.test(output) === true;
+  const signedIn = CODEX_SIGNED_IN.test(output) === true;
+
+  if (result.ok === true) {
+    return {
+      status: "registered",
+      command: rendered,
+      signIn: signedIn === true
+        ? { state: "completed", detail: "signed in during registration" }
+        : { state: "not_started", detail: null },
+    };
+  }
+
+  if (added === true || (result.timedOut === true && signInStarted === true)) {
+    // The detail names what happened and stops; the caller prints the sign-in command
+    // beside it, so repeating it here would print it twice.
+    const reason = lastLine(result) || `exit ${result.status}`;
+    const detail = result.timedOut === true
+      ? `${host.cli} opened a browser sign-in during registration, but it was not completed within ${describeDuration(signInTimeoutMs)}.`
+      : signInStarted === true
+        ? `${host.cli} opened a browser sign-in during registration, but it did not finish: ${reason}`
+        : `${host.cli} registered the server but then exited early: ${reason}`;
+    return {
+      status: "registered",
+      command: rendered,
+      signIn: { state: signInStarted === true ? "interrupted" : "not_started", detail },
+    };
+  }
+
+  if (saysAlreadyRegistered(result) === true) {
+    return { status: "already_registered", command: rendered, signIn: { state: "not_started", detail: null } };
+  }
+
+  if (result.timedOut === true) {
+    return {
+      status: "failed",
+      command: rendered,
+      detail:
+        `${host.cli} did not finish within ${describeDuration(signInTimeoutMs)} and was stopped. ` +
+        `Run it yourself in a terminal: ${rendered}`,
+      manual: manualConfigSnippet(host, { endpoint }),
+    };
+  }
+
+  return {
+    status: "failed",
+    command: rendered,
+    detail: (result.stderr || result.stdout).trim(),
+    manual: manualConfigSnippet(host, { endpoint }),
+  };
+}
+
+/** A wait, in the unit a person would say it in. */
+export function describeDuration(ms) {
+  if (ms >= 60_000) {
+    const minutes = Math.round(ms / 60_000);
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  return `${seconds} second${seconds === 1 ? "" : "s"}`;
+}
+
+/** The last thing the command said, preferring stderr — that is where an error lands. */
+function lastLine(result) {
+  for (const text of [result.stderr, result.stdout]) {
+    const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+    if (lines.length > 0) {
+      return lines[lines.length - 1];
+    }
+  }
+  return "";
 }
 
 /**

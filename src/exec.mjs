@@ -6,7 +6,7 @@
  * calls, and an argument array cannot be talked into running a second command the way a
  * shell string can.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 
 /**
@@ -128,6 +128,120 @@ export function run(command, args, options = {}) {
     spawnError: false,
     timedOut: false,
   };
+}
+
+/**
+ * Run a command that a person may be part of, watching its output as it goes.
+ *
+ * `run` is right for commands that finish on their own. This exists for the one that does
+ * not: `codex mcp add --url` writes the config and then opens a browser and waits for the
+ * person to sign in, however long that takes. Buffering that behind `spawnSync` hides the
+ * authorize URL until the command ends, and ending it on a short timeout kills the local
+ * callback listener the browser is about to redirect to — the sign-in the person just
+ * completed fails at the last step, and the installer reports the registration as failed
+ * when the config was written in the first second.
+ *
+ * So output is handed to `onLine` as it arrives, for the caller to echo, and is also
+ * collected so the caller can read what happened afterwards. The timeout is the caller's to
+ * size to the slowest thing inside the command, which here is a person. On timeout the
+ * process gets SIGTERM and, if it ignores that, SIGKILL shortly after.
+ *
+ * Same result shape as `run`, so callers can inspect either the same way.
+ */
+export function runStreaming(command, args, options = {}) {
+  const { timeoutMs = 30_000, onLine = null, env = process.env } = options;
+
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(command, args, { shell: false, stdio: ["ignore", "pipe", "pipe"], env });
+    } catch (error) {
+      resolve({
+        ok: false,
+        status: null,
+        stdout: "",
+        stderr: String(error.message ?? error),
+        spawnError: true,
+        timedOut: false,
+      });
+      return;
+    }
+
+    let timedOut = false;
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (settled === false) {
+          child.kill("SIGKILL");
+        }
+      }, 2_000).unref();
+    }, timeoutMs);
+
+    // Line-buffered per stream so a chunk boundary in the middle of a URL does not hand the
+    // caller half of it.
+    const watch = (stream, stash) => {
+      let pending = "";
+      stream.setEncoding("utf8");
+      stream.on("data", (chunk) => {
+        stash.push(chunk);
+        pending += chunk;
+        let newline = pending.indexOf("\n");
+        while (newline !== -1) {
+          const line = pending.slice(0, newline).replace(/\r$/, "");
+          pending = pending.slice(newline + 1);
+          if (onLine !== null && line.trim() !== "") {
+            onLine(line);
+          }
+          newline = pending.indexOf("\n");
+        }
+      });
+      stream.on("end", () => {
+        if (onLine !== null && pending.trim() !== "") {
+          onLine(pending.replace(/\r$/, ""));
+        }
+      });
+    };
+
+    const outChunks = [];
+    const errChunks = [];
+    watch(child.stdout, outChunks);
+    watch(child.stderr, errChunks);
+
+    const finish = (result) => {
+      if (settled === true) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        ...result,
+        stdout: outChunks.join(""),
+        stderr: result.stderr ?? errChunks.join(""),
+      });
+    };
+
+    child.on("error", (error) => {
+      finish({
+        ok: false,
+        status: null,
+        stderr: String(error.message ?? error),
+        spawnError: true,
+        timedOut: false,
+      });
+    });
+
+    child.on("close", (status) => {
+      finish({
+        ok: status === 0 && timedOut === false,
+        status,
+        spawnError: false,
+        timedOut,
+      });
+    });
+  });
 }
 
 /** A shell-ready rendering of a command, for printing a step the user has to run by hand. */
