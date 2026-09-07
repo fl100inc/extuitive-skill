@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 /**
- * `npx github:fl100inc/extuitive-skill install | update | uninstall | doctor`
+ * `npx extuitive install | update | uninstall | doctor`
+ *
+ * Reached through the `extuitive` launcher package (`packages/extuitive`), whose only job is
+ * to import this file; `npx github:fl100inc/extuitive-skill` runs it straight from the repo.
  *
  * Argument parsing, prompting, and printing. All the decisions live in `src/`; this file
  * exists to turn them into something readable in a terminal — and, increasingly, readable by

@@ -2,7 +2,13 @@
  * Values that appear in more than one place, defined once.
  */
 
-export const PACKAGE_NAME = "extuitive-skill";
+/**
+ * The name people type. This is the unscoped launcher package on npm (`packages/extuitive`),
+ * which depends on `@extuitive/skill` — the package this file ships in — and does nothing
+ * but import `bin/cli.mjs`. The usage text shows the launcher's name because that is the
+ * command, not the implementation.
+ */
+export const PACKAGE_NAME = "extuitive";
 
 /** `owner/repo`, the one string that has to change if the repository moves. */
 export const GITHUB_REPO = "fl100inc/extuitive-skill";
@@ -10,12 +16,12 @@ export const GITHUB_REPO = "fl100inc/extuitive-skill";
 /**
  * How to invoke this tool, for every message that tells someone to run it again.
  *
- * Deliberately the GitHub specifier rather than a bare package name: the package is
- * installed straight from the repository, so `npx extuitive-skill` would send npm looking
- * in a registry that has never heard of it. Printing a command that cannot work is worse
- * than printing none, because it reads as the tool being broken.
+ * `npx extuitive` resolves the launcher from the npm registry, so it works from any
+ * directory with nothing installed. `npx github:fl100inc/extuitive-skill` still runs the
+ * unreleased `main` for anyone who wants that, but it is not what a fix message should
+ * suggest.
  */
-export const NPX_COMMAND = `npx github:${GITHUB_REPO}`;
+export const NPX_COMMAND = `npx ${PACKAGE_NAME}`;
 
 /** Overridable with `--endpoint` for development against a local dev server. */
 export const DEFAULT_MCP_ENDPOINT = "https://www.extuitive.com/mcp";

@@ -1,7 +1,7 @@
 {
-  "name": "@extuitive/skill",
+  "name": "extuitive",
   "version": "0.1.0",
-  "description": "The Extuitive agent skill and installer for Claude Code, Codex, and Claude Desktop. Run it with `npx extuitive`.",
+  "description": "Install the Extuitive agent skill into Claude Code, Codex, or Claude Desktop and connect it to the Extuitive MCP server.",
   "type": "module",
   "license": "MIT",
   "publishConfig": {
@@ -9,7 +9,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/fl100inc/extuitive-skill.git"
+    "url": "git+https://github.com/fl100inc/extuitive-skill.git",
+    "directory": "packages/extuitive"
   },
   "homepage": "https://github.com/fl100inc/extuitive-skill#readme",
   "bugs": {
@@ -24,17 +25,18 @@
     "agent-skills",
     "facebook-ads"
   ],
+  "bin": {
+    "extuitive": "bin/extuitive.mjs"
+  },
   "files": [
     "bin",
-    "src",
-    "skills",
     "README.md",
     "LICENSE"
   ],
   "engines": {
     "node": ">=20"
   },
-  "scripts": {
-    "doctor": "node bin/cli.mjs doctor"
+  "dependencies": {
+    "@extuitive/skill": "^0.1.0"
   }
 }

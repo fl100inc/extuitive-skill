@@ -7,10 +7,10 @@ An Extuitive workspace is one Facebook ads account. The skill lets an agent pick
 to work in, upload creative into it, track how that upload is going, and repair a Meta
 connection that has stopped delivering data.
 
-Installed straight from this repository — there is no npm package:
+Install it from npm:
 
 ```bash
-npx github:fl100inc/extuitive-skill install
+npx extuitive install
 ```
 
 That puts the skill where your host looks for it, connects the MCP server, and tells you how
@@ -31,7 +31,7 @@ then points you at the right setup step and brings you back.
 Paste this into Claude Code or Codex and it does the rest:
 
 > Install the Extuitive skill: run
-> **`npx github:fl100inc/extuitive-skill install --host codex --yes`**
+> **`npx extuitive install --host codex --yes`**
 > (use `--host claude` in Claude Code, or `--host all`). Then tell me where the skill was
 > installed, linking its name to the `SKILL.md` path the installer printed, relay the sign-in
 > step exactly as printed without running it, and say when the skill and the Extuitive tools
@@ -132,7 +132,7 @@ everything it can find. `--host both` still works and still means all of them.
 ### Claude Code
 
 ```bash
-npx github:fl100inc/extuitive-skill install --host claude
+npx extuitive install --host claude
 ```
 
 Which does:
@@ -159,7 +159,7 @@ one project and looks broken in the next.
 ### Codex
 
 ```bash
-npx github:fl100inc/extuitive-skill install --host codex
+npx extuitive install --host codex
 ```
 
 Which does:
@@ -198,7 +198,7 @@ the Codex or ChatGPT desktop app on macOS. Point it somewhere else with `CODEX_C
 ### Claude Desktop
 
 ```bash
-npx github:fl100inc/extuitive-skill install --host claude-desktop
+npx extuitive install --host claude-desktop
 ```
 
 Nothing is registered and nothing is copied into the app, because neither is possible here.
@@ -357,7 +357,7 @@ script only ever sees presigned URLs scoped to a single object, which expire.
 ## Troubleshooting
 
 ```bash
-npx github:fl100inc/extuitive-skill doctor
+npx extuitive doctor
 ```
 
 It reports the endpoint, which skills are installed where, and what your host says about the
@@ -399,15 +399,22 @@ Common causes, in the order they usually happen:
 ## Local development
 
 ```bash
-npx github:fl100inc/extuitive-skill install --endpoint http://localhost:3001/mcp
+npx extuitive install --endpoint http://localhost:3001/mcp
 ```
 
 Port 3001 is what the lead-magnet app binds with `npm run dev`.
 
+Two packages are published from this repository. `@extuitive/skill`, the root, is the skill
+and the installer. `extuitive`, in `packages/extuitive`, is the command: a `bin` that imports
+the installer from `@extuitive/skill` and nothing else, so that what people type is
+`npx extuitive`. Release the root first, then the launcher, since the launcher depends on it.
+To run the checked-out code without publishing, use `node bin/cli.mjs <command>` from the
+repository root.
+
 ## Update
 
 ```bash
-npx github:fl100inc/extuitive-skill update
+npx extuitive update
 ```
 
 Refreshes an install that is already here. It only touches hosts that already have the skill,
@@ -425,13 +432,19 @@ differed — so an update is safe to do either way. The difference is what gets 
 adds the sign-up note and the manual steps when a CLI could not be driven; update prints the
 summary block and stops.
 
-The package is fetched from this repository rather than a registry, so `npx` resolves the ref
-on each run and an update picks up whatever is on `main`.
+`npx` fetches the released version from npm, so an update picks up the latest published
+release. To run whatever is on `main` instead, use the repository directly:
+
+```bash
+npx github:fl100inc/extuitive-skill update
+```
+
+Any command in this README works the same way with that prefix.
 
 ## Uninstall
 
 ```bash
-npx github:fl100inc/extuitive-skill uninstall
+npx extuitive uninstall
 ```
 
 Removes the skill directories — from the current location and from Extuitive's previous Codex
