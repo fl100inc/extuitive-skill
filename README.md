@@ -1,6 +1,6 @@
 # extuitive-skill
 
-An agent skill for [Extuitive](https://go.extuitive.com), plus an installer that connects
+An agent skill for [Extuitive](https://extuitive.com), plus an installer that connects
 Claude Code, Codex, or Claude Desktop to the Extuitive MCP server.
 
 An Extuitive workspace is one Facebook ads account. The skill lets an agent pick which account
@@ -44,7 +44,7 @@ Codex — the Codex CLI, the Codex desktop app, and the IDE extension
 ───────────────────────────────────────────────────────────────────
   Skill       installed      ~/.codex/skills/extuitive
                              /Users/you/.codex/skills/extuitive/SKILL.md
-  MCP server  registered     codex mcp add extuitive --url https://go.extuitive.com/mcp
+  MCP server  registered     codex mcp add extuitive --url https://extuitive.com/mcp
   Sign-in     needed         codex mcp login extuitive
                              Opens a browser; only you can complete it.
 
@@ -139,7 +139,7 @@ Which does:
 
 ```bash
 # skills → ~/.claude/skills/
-claude mcp add --transport http extuitive https://go.extuitive.com/mcp --scope user
+claude mcp add --transport http extuitive https://extuitive.com/mcp --scope user
 ```
 
 The skill is usable immediately. The server is not: **start a new Claude Code session** —
@@ -166,7 +166,7 @@ Which does:
 
 ```bash
 # skills → $CODEX_HOME/skills/   (~/.codex/skills/ unless CODEX_HOME is set)
-codex mcp add extuitive --url https://go.extuitive.com/mcp
+codex mcp add extuitive --url https://extuitive.com/mcp
 ```
 
 Then `codex mcp login extuitive` to sign in. The skill itself is picked up on your next turn;
@@ -215,7 +215,7 @@ Then, in the app:
 2. **Customize > Skills** — `+`, then Create skill, then Upload a skill, and choose the
    `extuitive.zip` the command printed.
 3. **Settings > Connectors** — Add custom connector, and paste
-   `https://go.extuitive.com/mcp` as the URL.
+   `https://extuitive.com/mcp` as the URL.
 4. Approve access in the browser window that opens, then **start a new chat**.
 
 Two things are different here and both are the app's design rather than a limitation of this
@@ -246,7 +246,7 @@ instead. Cowork and the Code tab can reach your files normally.
 | `--host <name\|all>` | detected | `claude`, `codex`, `claude-desktop`, or `all`. Required without a TTY. |
 | `--scope <user\|project>` | `user` | Every project, or only this one. Ignored by `claude-desktop`, where a skill belongs to an account rather than a directory. |
 | `--dir <path>` | host default | Install skills, or write the bundle, somewhere else entirely. |
-| `--endpoint <url>` | `https://go.extuitive.com/mcp` | Point at a different server. |
+| `--endpoint <url>` | `https://extuitive.com/mcp` | Point at a different server. |
 | `--keep-server` | off | Uninstall only: leave the MCP server registered. |
 | `--dry-run` | off | Report what would change, change nothing. |
 | `--yes`, `-y` | off | Take defaults, never prompt. |
@@ -342,7 +342,7 @@ actions and settle asynchronously; `get_meta_action` is the only way to learn wh
 
 ## The MCP server
 
-- **Endpoint** `https://go.extuitive.com/mcp`
+- **Endpoint** `https://extuitive.com/mcp`
 - **Transport** stateless Streamable HTTP JSON-RPC over `POST`
 - **Auth** OAuth 2.1, authorization code with PKCE `S256`, Dynamic Client Registration, scope `mcp`
 
