@@ -19,7 +19,7 @@ then the connection is a panel they click through, and telling them to run somet
 send them looking for a terminal they may not have:
 
 > Settings, then Connectors, then Add custom connector, and paste
-> `https://extuitive.com/mcp` as the URL.
+> `https://www.extuitive.com/mcp` as the URL.
 
 Everywhere else, tell them to run:
 
