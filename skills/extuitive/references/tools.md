@@ -8,7 +8,7 @@ Server endpoint is `https://www.extuitive.com/mcp`. Every tool except `list_work
 membership is re-checked on every single call — a token issued before someone left a workspace
 does not still reach it.
 
-## Read this first: five things that cause wrong answers
+## Read this first: six things that cause wrong answers
 
 1. **`role` and `isOwner` say nothing about uploading.** They decide one thing only: who may
    call `create_meta_reconnect_link`. A workspace where this caller is `viewer` may accept
@@ -27,7 +27,10 @@ does not still reach it.
    bundled `scripts/upload.mjs` does this for you.
 5. **No tool is annotated.** None declares `readOnlyHint`, `destructiveHint`, or an output
    schema, so nothing can be inferred about safety from the listing. `abort_upload` is
-   destructive and carries no marking.
+   destructive and carries no marking. The four library tools are read-only.
+6. **`not_indexed_yet` is not an error.** `describe_content` says it for every file the index
+   has not read yet, which on a fresh upload is most of them and on a video is all of them for
+   several minutes. Report it and move on; it is not a reason to poll.
 
 Results always arrive as both a JSON text block and `structuredContent` with the same payload.
 
@@ -203,6 +206,82 @@ whenever you cannot make HTTP requests, and for very large video where signing e
 would take too many calls. The page requires them to be signed in, so the link grants nothing
 on its own.
 
+## Library
+
+What the creative index knows about a workspace's bulk-uploaded files. Four read-only tools,
+one corpus: files that arrived through an upload on **this** workspace. The server sets that
+scope from the workspace itself and no argument widens it; there is no parameter for an ad
+account, a tenant, or "include everything". Results never include ad ids or Meta handles.
+
+Indexing is asynchronous. A file is read after it reaches `READY` — images in about a minute,
+video in several — so a fresh upload is normally part-indexed, and that is what the three
+states of `describe_content` are for.
+
+### `describe_content`
+
+| Argument | Required | Notes |
+| --- | --- | --- |
+| `workspaceId` | yes | |
+| `contentIds` | yes | 1 to 50 `contentId`s, returned in the same order |
+| `fields` | no | Replaces the default field set; unknown names are refused with the allowed list |
+
+Returns `count`, `indexed`, `notIndexedYet`, `unknown`, `fields`, and `results` — one per id:
+
+| State | Also carries | Meaning |
+| --- | --- | --- |
+| `indexed` | `asset` | The index has read it |
+| `not_indexed_yet` | `uploadStatus` | This workspace's file; the index has not caught up. `REJECTED` / `ABORTED` / `EXPIRED` here means it never will |
+| `unknown` | — | Not an upload in this workspace |
+
+Default `asset` fields: `media_type`, `on_screen_text`, `visual_tags`, `holistic_description`,
+and on video `duration_seconds`, `transcript_hook`, `hook_holistic_description`,
+`hook_on_screen_text`, `audio_type` (`speech` / `music` / `mixed` / `silent`), `has_speech`.
+Always present: `asset_sha256`, `content_ids`, `batch_ids`, `uploaded_at`. On request via
+`fields`: `transcript`, `foreground_description`, `background_description`, `hook_visual_tags`,
+`audio_description`, `spoken_language`, `width`, `height`, `aspect_bucket`, `file_names`.
+
+The same bytes uploaded twice are one index document with two `content_ids`; both ids get an
+entry.
+
+### `group_content_variants`
+
+| Argument | Required |
+| --- | --- |
+| `workspaceId`, `batchId` | yes |
+
+Returns `count`, `grouped`, `ungroupedNoDimensions`, `notEmbedded`, and `groups`. Each group:
+`group_id`, `anchor` (the 1:1 member's hash), `members[]` with `asset_sha256`,
+`aspect_bucket`, `file_name`, `is_anchor`, and a trimmed `asset`. A member of a group of one is
+only a lone concept if it is *not* in `notEmbedded`.
+
+### `find_similar_content`
+
+| Argument | Required | Notes |
+| --- | --- | --- |
+| `workspaceId`, `contentId` | yes | The query is always an upload you hold; never a raw image |
+| `k` | no | 1 to 50, default 10 |
+| `vectorKind` | no | `asset` (whole creative, default) or `hook` (a video's opening seconds) |
+| `batchId` | no | Restrict neighbors to one batch |
+
+Returns `contentId`, `vectorKind`, `count`, `results[]` nearest first with `assetSha256`,
+`score`, `mediaType`, `asset`. The query's own aspect-ratio siblings score highest.
+
+### `search_content`
+
+| Argument | Required | Notes |
+| --- | --- | --- |
+| `workspaceId` | yes | Alone, it means "what have we uploaded", newest first |
+| `text` | no | Overlay copy, descriptions, transcripts |
+| `hookText` | no | Opening seconds of videos only |
+| `tags` | no | `visual_tags` values; all must match unless `tagsMatch: "any"` |
+| `mediaType` | no | `image` or `video` |
+| `uploadedSince` | no | ISO timestamp or date math such as `now-7d` |
+| `batchId` | no | One batch |
+| `limit` | no | 1 to 100, default 25 |
+
+Returns `total`, `count`, `sortedBy` (`recent` when there is no text, else `relevance`),
+`results[]` of trimmed index documents, and `topTags` — the tag vocabulary across the matches.
+
 ## Status lifecycle
 
 | Status | Final | Counted in `pending` |
@@ -236,6 +315,12 @@ they are yours to read and act on rather than hard failures.
 | `upload_signing_invalid_json` | Upstream returned something unparseable |
 | `upload_signing_unconfigured` | Server is missing its upstream credentials |
 | `upstream_{status}` | Upstream error with no more specific code |
+| `too_many_content_ids` | `describe_content` got more than 50 ids; page, do not drop |
+| `content_not_indexed_yet` | `find_similar_content`'s query has no vector yet; same as `not_indexed_yet` |
+| `workspace_has_no_ad_account` | No Meta ad account on the workspace, so no library to read |
+| `library_unconfigured` | Server is not wired to the creative index in this environment |
+| `library_unreachable`, `library_timeout`, `library_invalid_json` | The creative index could not be reached or answered badly |
+| `library_upstream_error` | The index refused the query; `message` carries its reason, `status` its code |
 | `internal_error` | Server-side fault; the detail is logged, not returned |
 
 Genuine protocol faults — an unknown tool, malformed JSON-RPC — arrive as JSON-RPC errors

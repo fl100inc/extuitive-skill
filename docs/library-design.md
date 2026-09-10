@@ -1,6 +1,7 @@
 # Library: reading what was uploaded
 
-Design for the next tier of the Extuitive skill and MCP server. Status: agreed, not built.
+Design for the next tier of the Extuitive skill and MCP server. Status: built on feature
+branches in all three repos (2026-09-10), not yet merged or deployed to dev.
 
 ## The gap
 
@@ -65,7 +66,7 @@ one of three states:
 | State | Meaning | What the agent says |
 | --- | --- | --- |
 | `indexed` | Document present | Summarize it |
-| `not_indexed_yet` | `READY` in the content table, no asset document | "Still being read; video takes minutes" |
+| `not_indexed_yet` | A content row exists (its `uploadStatus` is returned), no asset document | "Still being read; video takes minutes" — unless `uploadStatus` is `REJECTED`, then "never will be" |
 | `unknown` | Not a `contentId` in this workspace | "No such upload here" |
 
 Three states because the agent needs to say three different things, the same way
@@ -154,20 +155,27 @@ repo's skill. Reconcile when `library` lands or the two drift.
 ### aws-data-platform, `dataops/creative-index-pipeline`
 
 - `lambdas/search_api/handler.py`, `route_asset`: accept `content_ids[]` alongside
-  `asset_sha256`. Return one entry per requested id with the three-state answer. Today it
-  takes one sha and 400s on miss.
+  `asset_sha256`. Return one entry per requested id, in order, as `indexed` or `not_found`;
+  never a 400 on a miss. Default `fields` is the describe set; unknown names are a 400
+  naming the allowlist; cap 50. The index cannot tell `not_indexed_yet` from `unknown`: its
+  ledger is keyed on sha, not content id, so that split is the MCP's.
 - `lib/creative-index-stack.ts`, `SearchApiGateway`: add `variants` to the resource list.
-  The Lambda routes it; the Gateway does not expose it. Consider leaving `knn-performance`
-  off the key the MCP holds so that key cannot reach analysis routes yet.
+  The Lambda routes it; the Gateway did not expose it. A key that omits `knn-performance`
+  is not possible with one usage plan; revisit if the analysis routes need gating.
+- `scripts/check_describe.py`: offline checks plus `--live` against the dev Gateway.
 
 ### extuitive-mcp
 
-- New `src/lib/mcp/tools/library-tools.ts` with the four tools. Register in
-  `src/lib/mcp/tools/index.ts`.
-- Resolve workspace to ad account, set `account_ids`, drop any caller-supplied fence, force
-  `uploaded_only`, call the Gateway. API key and base URL from env.
-- Map Gateway `400` on a missing asset to `not_indexed_yet` versus `unknown` by checking the
-  content table for the `contentId` first.
+- `src/lib/mcp/library.ts`: the module. Membership guard, then the workspace's `act_` ad
+  account written into the body last as `account_ids`; per-route field allowlist drops any
+  caller-supplied `account_ids` / `mca_ids` / `uploaded_only` / `meta_status` / `vector`;
+  `uploaded_only` forced on `variants`, `similar`, `attributes`. Responses trimmed of ad and
+  Meta handles and the tenant lists. Env `CREATIVE_SEARCH_URL`, `CREATIVE_SEARCH_API_KEY`.
+- `src/lib/mcp/tools/library-tools.ts`: the four tools, registered in
+  `src/lib/mcp/tools/index.ts` between the upload and Meta-object tools.
+- `describe_content` turns the index's `not_found` into `not_indexed_yet` (a content row
+  exists; its `uploadStatus` is returned) or `unknown` (no row) via `getMcpUploadContent`,
+  one read per miss.
 
 ### extuitive-skill (this repo), docs only
 

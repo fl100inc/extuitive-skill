@@ -102,6 +102,7 @@ One skill, `extuitive`, which takes a command:
 | `select` | Choose which ad account the rest of the session works in |
 | `upload` | Upload a folder of images or videos into a workspace |
 | `upload-status` | Report how the current upload is going |
+| `library` | Say what uploaded files contain, group them into ads, find uploads like or about something |
 | `connect` | Connect Meta, or repair a workspace that has stopped updating |
 
 **The prefix differs by host, and using the wrong one looks like a broken install.**
@@ -122,7 +123,7 @@ passes your wording through, which works because the command word is still sitti
 prompt the model reads.
 
 The CLI hosts take a skill's name from its directory, which is why there is one skill with
-commands rather than five skills — `/extuitive-upload` would need a separate directory each
+commands rather than six skills — `/extuitive-upload` would need a separate directory each
 time, and the command form reads better and keeps one description in front of the model.
 
 You usually will not type any of it. Asking for the underlying thing — "upload these ads to
@@ -507,8 +508,8 @@ skills/extuitive/
 ```
 
 `SKILL.md` stays short on purpose: it is loaded whenever the skill is considered, while a
-`references/` file is read only once the agent knows which job it is doing. Putting all five
-flows in the front page would spend context on four of them every time.
+`references/` file is read only once the agent knows which job it is doing. Putting all six
+flows in the front page would spend context on five of them every time.
 
 `README.md` lives here at the repo root and nowhere else. Skill directories deliberately do
 not contain one — everything an agent reads belongs in `SKILL.md` or `references/`, and a

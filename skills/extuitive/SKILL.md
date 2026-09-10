@@ -1,13 +1,13 @@
 ---
 name: extuitive
-description: Work with Extuitive, where each workspace is one Facebook ads account. Check that Extuitive is connected and signed in, choose which ad account to work in, upload images and videos in bulk, check how an upload is going and which files were accepted, connect or repair a Meta connection, or set Extuitive up from scratch. Use when asked to check the Extuitive connection or whether Extuitive is set up, to upload, add, or import creative, ad images, ad videos, or a folder of assets into Extuitive, to check an Extuitive upload, to pick or switch which Extuitive workspace or ad account to work in, or when Extuitive tools are missing or refusing.
-argument-hint: "[init | select | upload | upload-status | connect]"
+description: Work with Extuitive, where each workspace is one Facebook ads account. Check that Extuitive is connected and signed in, choose which ad account to work in, upload images and videos in bulk, check how an upload is going and which files were accepted, read what uploaded files contain or find uploads like them, connect or repair a Meta connection, or set Extuitive up from scratch. Use when asked to check the Extuitive connection or whether Extuitive is set up, to upload, add, or import creative, ad images, ad videos, or a folder of assets into Extuitive, to check an Extuitive upload, to say what is in an upload or what a video says, to find uploads that look like one another or match a description, to pick or switch which Extuitive workspace or ad account to work in, or when Extuitive tools are missing or refusing.
+argument-hint: "[init | select | upload | upload-status | library | connect]"
 arguments: command
 ---
 
 # Extuitive
 
-One skill, five jobs. Read the reference for the job you are doing and follow it; this page
+One skill, six jobs. Read the reference for the job you are doing and follow it; this page
 only routes.
 
 ## Which job
@@ -23,10 +23,11 @@ substitute arguments, work it out from what was actually asked instead.
 | `select` | `references/select.md` | Choose which ad account the rest of this session works in |
 | `upload` | `references/upload.md` | Send local files into a workspace |
 | `upload-status` | `references/upload-status.md` | How is an upload going, what was accepted |
+| `library` | `references/library.md` | What does this file contain, which files are one ad at several sizes, find uploads like it or about it |
 | `connect` | `references/connect.md` | No workspaces, or ads data has gone stale — the *Meta* connection |
 
 Anything else, or nothing at all: pick from the "For" column. An unrecognised command is
-worth one sentence — say what the five are — rather than a guess.
+worth one sentence — say what the six are — rather than a guess.
 
 "Connection" is ambiguous here, so route it by what is being asked about. Whether *this
 host* can reach Extuitive — tools present, signed in, workspaces listed — is `init`, which
@@ -51,7 +52,8 @@ host's own credential store. You never see it, and no amount of retrying substit
 invent setup commands. They differ per host and they change.
 
 **Uploading files is not an instruction to do anything with them.** Thirty images is not a
-request for thirty ads. Report what landed and wait.
+request for thirty ads. Report what landed and wait. Reading them with `library` is the same:
+describing an upload is not a proposal to run it.
 
 **Say what a tool returned, not what it implies.** The fields on a workspace do not predict
 which tools will accept it — `role` and `isOwner` govern reconnecting Meta and nothing else —
