@@ -281,6 +281,35 @@ holds three of them. Steps 3 to 7 of the test table can run against this corpus 
 
 **Reject case:** any non-media file, e.g. a `.txt`, to exercise `REJECTED` with a reason.
 
+**Dev-only split between index and DB (found 2026-09-11):** those 68 pre-existing uploads
+are in the index and the ledger but have no `upload_batches` rows in the dev Supabase the MCP
+now reads — `list_upload_batches` returns 0 for Hidden Winners. They predate the dev DB
+change on 2026-09-10. Harmless for the library tools, which read the index, but those ids can
+never be `not_indexed_yet` and `get_upload_content` does not know them. Use a fresh upload
+for the lifecycle steps. Prod has no such split; its DB and index grew together.
+
+## Results of the dev run (2026-09-11)
+
+Run from a script holding a real OAuth token against the dev MCP, Hidden Winners workspace.
+Every row of the test table below passed except where noted; findings became follow-up PRs.
+
+- All four tools listed; `describe_content` on a known id returned the default set, a bogus
+  id was `unknown`, `fields` narrowed, an unknown field was refused with the allowlist, 51
+  ids was `too_many_content_ids`.
+- Fence: the same content id asked from the Extuitive-test-account workspace was `unknown`.
+- `group_content_variants` on batch `06744262…`: 5 assets, 5 groups, 2 without dimensions.
+- `find_similar_content` k=3 ranked three UGC talking heads at 1.0 / 0.924 / 0.849 — the
+  1.0 was the seed itself. **Follow-up:** `exclude_query` on `/similar`, sent by the MCP.
+- `search_content` text query ranked the target clip in the top 3 of 58; hits carried no
+  `score` and were full documents (~1.4 KB per image, ~7 KB per video, 100 hits ≈ 33k
+  tokens); `topTags` was 50 entries. **Follow-up:** `/attributes` emits `score` and takes
+  `fields` and `top_tags_size`; the MCP asks for the describe set and 15 tags by default.
+- Lifecycle on a fresh 2.9 MB clip: `not_indexed_yet` with `uploadStatus: READY` at 2 s,
+  `indexed` at ~45 s **without** `audio_type` / `holistic_description`, fully described at
+  ~75 s. **Follow-up:** the index always returns `annotated_at` / `video_annotated_at`, the
+  MCP derives `annotated` and `awaitingAnnotation`, and the skill text says "still being
+  described" for that window.
+
 ## Testing plan
 
 Three layers, one per repo, then one end-to-end pass through the skill. Fence tests are the

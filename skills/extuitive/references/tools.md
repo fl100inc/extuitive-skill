@@ -28,9 +28,10 @@ does not still reach it.
 5. **No tool is annotated.** None declares `readOnlyHint`, `destructiveHint`, or an output
    schema, so nothing can be inferred about safety from the listing. `abort_upload` is
    destructive and carries no marking. The four library tools are read-only.
-6. **`not_indexed_yet` is not an error.** `describe_content` says it for every file the index
-   has not read yet, which on a fresh upload is most of them and on a video is all of them for
-   several minutes. Report it and move on; it is not a reason to poll.
+6. **`not_indexed_yet` is not an error, and neither is `annotated: false`.** `describe_content`
+   says the first for every file the index has not read yet, which on a fresh upload is most of
+   them, and the second for a file it has read but not yet described — for video, the minute
+   after `indexed`. Report both and move on; neither is a reason to poll.
 
 Results always arrive as both a JSON text block and `structuredContent` with the same payload.
 
@@ -213,9 +214,11 @@ one corpus: files that arrived through an upload on **this** workspace. The serv
 scope from the workspace itself and no argument widens it; there is no parameter for an ad
 account, a tenant, or "include everything". Results never include ad ids or Meta handles.
 
-Indexing is asynchronous. A file is read after it reaches `READY` — images in about a minute,
-video in several — so a fresh upload is normally part-indexed, and that is what the three
-states of `describe_content` are for.
+Indexing is asynchronous and in two steps. A file is *indexed* shortly after it reaches
+`READY` — its type, size and duration are known — and *described* a little later, when the
+tags, prose and transcript land; for video that second step is tens of seconds after the
+first. A fresh upload is normally part-indexed and part-described, and that is what the three
+states of `describe_content` and its `annotated` flag are for.
 
 ### `describe_content`
 
@@ -225,20 +228,23 @@ states of `describe_content` are for.
 | `contentIds` | yes | 1 to 50 `contentId`s, returned in the same order |
 | `fields` | no | Replaces the default field set; unknown names are refused with the allowed list |
 
-Returns `count`, `indexed`, `notIndexedYet`, `unknown`, `fields`, and `results` — one per id:
+Returns `count`, `indexed`, `awaitingAnnotation`, `notIndexedYet`, `unknown`, `fields`, and
+`results` — one per id:
 
 | State | Also carries | Meaning |
 | --- | --- | --- |
-| `indexed` | `asset` | The index has read it |
+| `indexed` | `asset`, `annotated` | The index has read it. `annotated: false` means the description pass is still running: the tags, prose and video fields are absent, not empty |
 | `not_indexed_yet` | `uploadStatus` | This workspace's file; the index has not caught up. `REJECTED` / `ABORTED` / `EXPIRED` here means it never will |
 | `unknown` | — | Not an upload in this workspace |
 
 Default `asset` fields: `media_type`, `on_screen_text`, `visual_tags`, `holistic_description`,
 and on video `duration_seconds`, `transcript_hook`, `hook_holistic_description`,
 `hook_on_screen_text`, `audio_type` (`speech` / `music` / `mixed` / `silent`), `has_speech`.
-Always present: `asset_sha256`, `content_ids`, `batch_ids`, `uploaded_at`. On request via
-`fields`: `transcript`, `foreground_description`, `background_description`, `hook_visual_tags`,
-`audio_description`, `spoken_language`, `width`, `height`, `aspect_bucket`, `file_names`.
+Always present: `asset_sha256`, `content_ids`, `batch_ids`, `uploaded_at`, and the stamps
+`annotated` is read from (`annotated_at` on an image, `video_annotated_at` on a video). On
+request via `fields`: `transcript`, `foreground_description`, `background_description`,
+`hook_visual_tags`, `audio_description`, `spoken_language`, `width`, `height`,
+`aspect_bucket`, `file_names`.
 
 The same bytes uploaded twice are one index document with two `content_ids`; both ids get an
 entry.
@@ -264,7 +270,8 @@ only a lone concept if it is *not* in `notEmbedded`.
 | `batchId` | no | Restrict neighbors to one batch |
 
 Returns `contentId`, `vectorKind`, `count`, `results[]` nearest first with `assetSha256`,
-`score`, `mediaType`, `asset`. The query's own aspect-ratio siblings score highest.
+`score`, `mediaType`, `asset`. The query itself is excluded; its own aspect-ratio siblings
+score highest.
 
 ### `search_content`
 
@@ -278,9 +285,13 @@ Returns `contentId`, `vectorKind`, `count`, `results[]` nearest first with `asse
 | `uploadedSince` | no | ISO timestamp or date math such as `now-7d` |
 | `batchId` | no | One batch |
 | `limit` | no | 1 to 100, default 25 |
+| `fields` | no | Replaces the per-hit field set; same allowlist as `describe_content` |
 
 Returns `total`, `count`, `sortedBy` (`recent` when there is no text, else `relevance`),
-`results[]` of trimmed index documents, and `topTags` — the tag vocabulary across the matches.
+`fields`, `results[]`, and `topTags` — the fifteen most common tags across the matches, which
+is the index's vocabulary for this account. Each hit carries the `describe_content` default
+set plus `file_names` and `aspect_bucket`, the always-present ids and stamps, `annotated`,
+and, under `relevance`, the index's `score`.
 
 ## Status lifecycle
 
