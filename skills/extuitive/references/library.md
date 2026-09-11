@@ -77,7 +77,11 @@ again unprompted, once after a few minutes is the limit.
 `media_type` are real, but `holistic_description`, `visual_tags`, `audio_type` and the
 transcript fields are simply absent. Absent is not "silent", "no on-screen text" or "no tags".
 `awaitingAnnotation` at the top of the response counts these. Treat them like
-`not_indexed_yet` for everything but the duration.
+`not_indexed_yet` for everything but the duration. Measured on dev: four of five images were
+described the moment they were indexed, the fifth 65 seconds later, an 8-second video 16
+seconds later. A file still `annotated: false` well past that (say ten minutes) is not
+"still being described" — the description pass did not run for it. Say that plainly and
+move on; the person can raise it with whoever runs the index.
 
 A `not_indexed_yet` row whose `uploadStatus` is `REJECTED`, `ABORTED` or `EXPIRED` will never
 be indexed. Say that instead of "still being read".
@@ -92,9 +96,16 @@ If the batch has more than a handful of images, call `group_content_variants` wi
 "six images" is the wrong count when it is two ads at three sizes each.
 
 Each group has an `anchor` (the 1:1 when there is one), its `members` with their aspect
-bucket, and a `group_id`. Summarize per group, naming the sizes present. A file alone in its
-group is a lone concept **unless** it is counted in `ungroupedNoDimensions` or listed in
-`notEmbedded`, which means it is still waiting on the index and could yet join a group.
+bucket, and a `group_id`. Summarize per group, naming the sizes present. A group never mixes
+a still with a video; a clip that opens on the frame a static was cut from is a different
+creative and gets its own group.
+
+A file alone in its group is a lone concept **unless** it is counted in
+`ungroupedNoDimensions` or listed in `notEmbedded`, which means it is still waiting on the
+index and could yet join a group. On a batch uploaded in the last few minutes those two
+lists mean "not yet", not "never": the index's asset record trails its searchable vector by
+about a minute, so grouping straight after everything reads `annotated: true` under-counts.
+Wait a minute and call it once more before summarizing, or say the count is provisional.
 
 ### 4. Summarize, in the index's words
 
@@ -116,10 +127,13 @@ not make and neither should you. Then stop.
 ### 5. Answer the follow-ups with the other two tools
 
 **"Have we uploaded something like this?"** — `find_similar_content` with the `contentId`.
-Neighbors come back nearest first with a `score` and their fields; the query itself is left
-out. Expect its own aspect-ratio siblings at the top; the interesting results are after them.
-`vectorKind: "hook"` compares how videos *open* rather than the whole clip. If the query is
-not indexed yet you get `content_not_indexed_yet`; report that and do not retry.
+Neighbors come back nearest first with a `score`, a `fileName` and `aspectBucket` to call
+them by, and their fields; the query itself is left out. Expect its own aspect-ratio
+siblings at the top; the interesting results are after them. `vectorKind: "hook"` compares
+how videos *open* rather than the whole clip. If the query's vector is not searchable yet you
+get `content_not_indexed_yet` — on a fresh upload that can happen for a minute after
+`describe_content` first says `indexed`, and for a video until it has been described.
+Report it as "give it a minute" and do not retry in a loop.
 
 **"Find the videos with the price on screen."**, **"The ones with the product on white."**,
 **"What did we upload last week?"** — `search_content`. `text` searches overlay copy,
@@ -129,7 +143,8 @@ match the index's own vocabulary; `uploadedSince` takes `now-7d` style date math
 describe set as `describe_content` plus `file_names` and `annotated`; pass `fields` to get
 less (`["media_type", "file_names"]` to list) or more (`transcript`). `topTags` in the
 response is how you learn the words the index uses for this account — read it before
-guessing a tag.
+guessing a tag. Tags come back in lower case and match regardless of case, so a tag read off
+`topTags` can go straight back in as `tags`.
 
 Both search this workspace's uploads only. Say so if the question was about anything else.
 
@@ -139,9 +154,11 @@ Both search this workspace's uploads only. Say so if the question was about anyt
 | --- | --- | --- |
 | `not_indexed_yet` for every file right after upload | Normal; the index runs after `READY` | Report, name them, offer to look again later |
 | `indexed` but `annotated: false`, no tags or prose | Known, description still running | Say "still being described"; do not read the absence as silence or blank |
+| `annotated: false` ten minutes on | The description pass did not run for this file | Say so; it is not going to describe itself |
 | `not_indexed_yet` with `uploadStatus: REJECTED` | Will never be indexed | Say so; `get_upload_batch_content` has the `rejectionReason` |
 | `unknown` for an id you got from a batch | Wrong workspace, or the id was mis-copied | Check which workspace the batch was created in |
-| `content_not_indexed_yet` from `find_similar_content` | The query file has no vector yet | Same as `not_indexed_yet` |
+| `content_not_indexed_yet` from `find_similar_content` | The query's vector is not searchable yet, even if describe says `indexed` | Give it a minute; same rule as `not_indexed_yet` |
+| `notEmbedded` or `ungroupedNoDimensions` on a batch uploaded minutes ago | The asset record is trailing the vector | Wait a minute, group once more, or call the count provisional |
 | `workspace_has_no_ad_account` | The workspace has no Meta account connected, so no library | `connect` |
 | `library_unconfigured` | The server is not wired to the index in this environment | Say so; nothing you can do from here |
 | `library_upstream_error` with a `message` | The index refused the query; the message says why | Read it — usually a bad `fields` name or too many ids |
