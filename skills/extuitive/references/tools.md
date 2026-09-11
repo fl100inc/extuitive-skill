@@ -257,8 +257,11 @@ entry.
 
 Returns `count`, `grouped`, `ungroupedNoDimensions`, `notEmbedded`, and `groups`. Each group:
 `group_id`, `anchor` (the 1:1 member's hash), `members[]` with `asset_sha256`,
-`aspect_bucket`, `file_name`, `is_anchor`, and a trimmed `asset`. A member of a group of one is
-only a lone concept if it is *not* in `notEmbedded`.
+`aspect_bucket`, `file_name`, `is_anchor`, and a trimmed `asset`. A group never mixes a still
+with a video. A member of a group of one is only a lone concept if it is *not* in
+`notEmbedded`; on a batch uploaded in the last few minutes `notEmbedded` and
+`ungroupedNoDimensions` mean the asset record has not caught up with the vector yet, so
+group again a minute later.
 
 ### `find_similar_content`
 
@@ -270,8 +273,8 @@ only a lone concept if it is *not* in `notEmbedded`.
 | `batchId` | no | Restrict neighbors to one batch |
 
 Returns `contentId`, `vectorKind`, `count`, `results[]` nearest first with `assetSha256`,
-`score`, `mediaType`, `asset`. The query itself is excluded; its own aspect-ratio siblings
-score highest.
+`score`, `mediaType`, `fileName` and `aspectBucket` when the index has them, and `asset`.
+The query itself is excluded; its own aspect-ratio siblings score highest.
 
 ### `search_content`
 
@@ -280,7 +283,7 @@ score highest.
 | `workspaceId` | yes | Alone, it means "what have we uploaded", newest first |
 | `text` | no | Overlay copy, descriptions, transcripts |
 | `hookText` | no | Opening seconds of videos only |
-| `tags` | no | `visual_tags` values; all must match unless `tagsMatch: "any"` |
+| `tags` | no | `visual_tags` values, matched regardless of case; all must match unless `tagsMatch: "any"` |
 | `mediaType` | no | `image` or `video` |
 | `uploadedSince` | no | ISO timestamp or date math such as `now-7d` |
 | `batchId` | no | One batch |

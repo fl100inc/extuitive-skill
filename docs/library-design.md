@@ -310,6 +310,47 @@ Every row of the test table below passed except where noted; findings became fol
   MCP derives `annotated` and `awaitingAnnotation`, and the skill text says "still being
   described" for that window.
 
+## Results of the second dev run (2026-09-11, W01 creatives)
+
+Five 4:5 statics and one 9:16 8-second UGC clip from the W01 campaign, one batch
+(`ab8bcc39…`), all plain `PUT`s including the 9 MB video. Seventeen behaviour checks across
+the four tools passed; the run surfaced four things and, through a tester's parallel
+upload, a fifth.
+
+- Lifecycle: all six `not_indexed_yet` / `READY` at 0 s and 21 s; all six `indexed` at 39 s
+  with four stills already described; the video described at 55 s; one still at 104 s.
+  `awaitingAnnotation` counted exactly the gap.
+- Descriptions: full OCR of every overlay, sensible tags, `duration 7.9 s / audio music /
+  has_speech false` on the clip.
+- Search: the account-wide text query ranked the batch 1–6 with scores 29–52 against 5.5
+  for the next older hit; `hookText` stayed video-only; `fields` listing came back at 8 keys
+  a row.
+- **Variants grouped a still with a video.** Once settled, `/variants` paired the dark
+  FasterLaunch3 static (4:5) with the UGC2 clip (9:16) at cosine 0.861. **Follow-up:**
+  `shared/variants.py` never pairs two known, different media types.
+- **Projection lag.** At 105 s variants reported three `not_embedded` and two without
+  dimensions, and asset-kind similarity on the video said `content_not_indexed_yet`, while
+  hook-kind and image similarity already worked. Consistent at 187 s. **Follow-up:** the
+  route docstring, the MCP wording and the skill read both as "not yet" on a fresh batch;
+  the skill says to group again a minute after everything is annotated.
+- **Neighbours had no name.** `/similar` hydration carried no `file_names` or
+  `aspect_bucket`. **Follow-up:** both ride along; the MCP lifts `fileName` and
+  `aspectBucket` beside the score.
+- **`topTags` case duplicates** (`Close-up shot` / `close-up shot`). **Follow-up:** the
+  index folds buckets to lower case after an over-fetched aggregation and the `tags` filter
+  matches case-insensitively, so a tag off the list selects what it was counted from.
+- **An extractor version bump blanked older descriptions.** A tester's re-upload of ten
+  files came back `indexed: 10, awaitingAnnotation: 10` and stayed there. The shas had been
+  annotated on Sep 2 under `observed-descriptors-v2`; the version moved to v3 on Sep 8; the
+  projector read only v3, and the re-upload re-projected the documents without any text.
+  The dev lake held 48,023 v2-only assets and 5 v3 ones. **Follow-up:** the projector falls
+  back to an asset's newest earlier annotation and records the version it used
+  (`aws-data-platform` #648, EXT3-161). The skill says a long-lived `annotated: false` is
+  "the description pass did not run", not "still being described".
+
+PRs: `aws-data-platform` #648 and #649, `extuitive-mcp` #8, this repo. Tickets EXT3-161,
+EXT3-164.
+
 ## Testing plan
 
 Three layers, one per repo, then one end-to-end pass through the skill. Fence tests are the
