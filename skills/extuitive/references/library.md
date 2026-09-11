@@ -63,14 +63,21 @@ Each id comes back in one of three states. Say a different thing for each:
 
 | State | Means | Say |
 | --- | --- | --- |
-| `indexed` | The index has read it; `asset` holds the fields | What it shows or says, in the index's words |
-| `not_indexed_yet` | It is this workspace's file (`uploadStatus` is there) but the index has not caught up | "Still being read." Images take about a minute after `READY`; video several minutes |
+| `indexed`, `annotated: true` | The index has read and described it; `asset` holds the fields | What it shows or says, in the index's words |
+| `indexed`, `annotated: false` | The file is known and measured (type, duration, size) but the description pass has not finished; no tags, prose or transcript yet | "Known, still being described." For video this window is under a minute after `indexed` |
+| `not_indexed_yet` | It is this workspace's file (`uploadStatus` is there) but the index has not caught up | "Still being read." Images take about a minute after `READY`; video a minute or two |
 | `unknown` | Not an upload in this workspace | "No such upload here." Check the id and the workspace |
 
 `not_indexed_yet` is the **normal first answer on a fresh upload**, especially for video. It is
 not an error and not a reason to poll. Report what is indexed, name what is not, tell the
-person video takes a few minutes, and offer to look again when they ask. If you must check
+person video takes a minute or two, and offer to look again when they ask. If you must check
 again unprompted, once after a few minutes is the limit.
+
+`annotated: false` is the step after that: the document exists, so `duration_seconds` and
+`media_type` are real, but `holistic_description`, `visual_tags`, `audio_type` and the
+transcript fields are simply absent. Absent is not "silent", "no on-screen text" or "no tags".
+`awaitingAnnotation` at the top of the response counts these. Treat them like
+`not_indexed_yet` for everything but the duration.
 
 A `not_indexed_yet` row whose `uploadStatus` is `REJECTED`, `ABORTED` or `EXPIRED` will never
 be indexed. Say that instead of "still being read".
@@ -109,17 +116,20 @@ not make and neither should you. Then stop.
 ### 5. Answer the follow-ups with the other two tools
 
 **"Have we uploaded something like this?"** — `find_similar_content` with the `contentId`.
-Neighbors come back nearest first with a `score` and their fields. Expect the query's own
-aspect-ratio siblings at the top; the interesting results are after them. `vectorKind: "hook"`
-compares how videos *open* rather than the whole clip. If the query is not indexed yet you get
-`content_not_indexed_yet`; report that and do not retry.
+Neighbors come back nearest first with a `score` and their fields; the query itself is left
+out. Expect its own aspect-ratio siblings at the top; the interesting results are after them.
+`vectorKind: "hook"` compares how videos *open* rather than the whole clip. If the query is
+not indexed yet you get `content_not_indexed_yet`; report that and do not retry.
 
 **"Find the videos with the price on screen."**, **"The ones with the product on white."**,
 **"What did we upload last week?"** — `search_content`. `text` searches overlay copy,
 descriptions and transcripts; `hookText` searches the opening seconds of videos only; `tags`
 match the index's own vocabulary; `uploadedSince` takes `now-7d` style date math. Without
-`text` the results are newest first. `topTags` in the response is how you learn the words the
-index uses for this account — read it before guessing a tag.
+`text` the results are newest first; with it each hit carries a `score`. Each hit has the same
+describe set as `describe_content` plus `file_names` and `annotated`; pass `fields` to get
+less (`["media_type", "file_names"]` to list) or more (`transcript`). `topTags` in the
+response is how you learn the words the index uses for this account — read it before
+guessing a tag.
 
 Both search this workspace's uploads only. Say so if the question was about anything else.
 
@@ -128,6 +138,7 @@ Both search this workspace's uploads only. Say so if the question was about anyt
 | You see | It means | Do |
 | --- | --- | --- |
 | `not_indexed_yet` for every file right after upload | Normal; the index runs after `READY` | Report, name them, offer to look again later |
+| `indexed` but `annotated: false`, no tags or prose | Known, description still running | Say "still being described"; do not read the absence as silence or blank |
 | `not_indexed_yet` with `uploadStatus: REJECTED` | Will never be indexed | Say so; `get_upload_batch_content` has the `rejectionReason` |
 | `unknown` for an id you got from a batch | Wrong workspace, or the id was mis-copied | Check which workspace the batch was created in |
 | `content_not_indexed_yet` from `find_similar_content` | The query file has no vector yet | Same as `not_indexed_yet` |
