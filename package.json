@@ -1,6 +1,6 @@
 {
   "name": "@extuitive/skill",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "The Extuitive agent skill and installer for Claude Code, Codex, and Claude Desktop. Run it with `npx extuitive`.",
   "type": "module",
   "license": "MIT",
