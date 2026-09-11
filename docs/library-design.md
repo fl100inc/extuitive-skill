@@ -1,7 +1,10 @@
 # Library: reading what was uploaded
 
-Design for the next tier of the Extuitive skill and MCP server. Status: built on feature
-branches in all three repos (2026-09-10), not yet merged or deployed to dev.
+Design for the next tier of the Extuitive skill and MCP server. Status: merged to
+`development` in all three repos and deployed to dev (2026-09-10): the dev Gateway serves
+`/variants` and `/asset` with `content_ids`; the dev MCP build includes the four library
+tools but is still behind Vercel Deployment Protection and needs `CREATIVE_SEARCH_URL` /
+`CREATIVE_SEARCH_API_KEY` set on the `development` environment before the tools work end to end.
 
 ## The gap
 
