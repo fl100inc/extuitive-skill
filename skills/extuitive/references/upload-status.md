@@ -63,6 +63,9 @@ indistinguishable from a hang, and the person cannot tell whether to keep waitin
 
 Then stop. Do not keep polling a settled batch.
 
+Once a batch has settled, "what's in it" is a different job: `library.md` reads the accepted
+files through the creative index. Do not answer that from filenames.
+
 ### 4. Read the numbers correctly
 
 `statusCounts`, `pending`, and `settled` always describe the **whole batch**. `count`
