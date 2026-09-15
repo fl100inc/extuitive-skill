@@ -41,9 +41,11 @@ jobs:
           node-version: 20
 
       # No dependencies to install: the installer is plain Node and builds the archive with
-      # its own ZIP writer.
+      # its own ZIP writer. Invoked directly rather than through `npm run bundle` because the
+      # checkout is the tag, not the default branch, and a tag from before that script
+      # existed has the CLI but not the script — which is exactly the backfill case.
       - name: Build the bundle
-        run: npm run bundle
+        run: node bin/cli.mjs install --host claude-desktop --dir dist --yes
 
       - name: Check the bundle
         run: |

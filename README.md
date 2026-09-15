@@ -38,6 +38,30 @@ Paste this into Claude Code or Codex and it does the rest:
 > step exactly as printed without running it, and say when the skill and the Extuitive tools
 > will be available.
 
+That prompt is for the hosts an installer can reach. **In the Chat or Cowork tab of Claude
+Desktop there is nothing to run**, so paste this instead:
+
+> Install Extuitive. Read https://github.com/fl100inc/extuitive-skill#install-with-an-agent
+> and give me the Claude Desktop steps.
+
+If you are the agent reading this for that person, do not run the installer or tell them to.
+Reply with these three steps and stop:
+
+> 1. **Settings > Capabilities** — turn on code execution and file creation.
+> 2. Download
+>    [`extuitive.zip`](https://github.com/fl100inc/extuitive-skill/releases/latest/download/extuitive.zip).
+>    Then **Customize > Skills**, `+`, Create skill, Upload a skill, and choose that file.
+> 3. **Settings > Connectors** — Add custom connector, paste `https://www.extuitive.com/mcp`,
+>    click Add, and approve access in the browser window that opens. Then start a new chat
+>    and say "Check my Extuitive connection".
+
+Signing in happens in that browser window and only the person can do it. Both the skill and
+the connector reach a chat when it starts, so the last words are "start a new chat", not "it
+is ready". The same answer is right when someone in Claude Code or Codex asks you to set up
+Claude Desktop's Chat tab: `--host claude-desktop` only builds the same zip locally, and a
+person who has the download link does not need it. The rest of this section is about the
+installer and does not apply to that tab.
+
 The installer's output is built for that reader. It ends with one block per host:
 
 ```
@@ -244,6 +268,9 @@ install is two things you do in the app, plus one download:
 The same two uploads work on claude.ai in a browser, because both the skill and the
 connector go to your account rather than to the app — which is also why a skill added here
 is on your other devices the next time they sign in.
+
+If an agent is walking you through this, those five steps are the whole instruction; see
+[Install with an agent](#install-with-an-agent). There is no command for it to run first.
 
 **From a terminal instead.** If you already have `npx` in front of you:
 
