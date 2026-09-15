@@ -23,6 +23,17 @@ export const GITHUB_REPO = "fl100inc/extuitive-skill";
  */
 export const NPX_COMMAND = `npx ${PACKAGE_NAME}`;
 
+/**
+ * Where the pre-built Claude Desktop bundle is published.
+ *
+ * `install --host claude-desktop` builds the same archive locally, but the only thing the
+ * archive is for is an upload through a panel, so a download link serves the person who
+ * has no terminal — or no wish to open one — just as well. The release workflow attaches
+ * `extuitive.zip` under this fixed name to every tagged release, and GitHub's `latest`
+ * redirect keeps the URL stable across versions.
+ */
+export const BUNDLE_DOWNLOAD_URL = `https://github.com/${GITHUB_REPO}/releases/latest/download/extuitive.zip`;
+
 /** Overridable with `--endpoint` for development against a local dev server. */
 export const DEFAULT_MCP_ENDPOINT = "https://www.extuitive.com/mcp";
 

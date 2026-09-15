@@ -23,7 +23,7 @@
  * takes a second path for it, chosen by `mcpSetup` rather than by host id. See
  * `connectorSteps` for why its config file is left alone even as a fallback.
  */
-import { DEFAULT_MCP_ENDPOINT, MCP_SERVER_NAME, NPX_COMMAND } from "./constants.mjs";
+import { BUNDLE_DOWNLOAD_URL, DEFAULT_MCP_ENDPOINT, MCP_SERVER_NAME, NPX_COMMAND } from "./constants.mjs";
 import { formatCommand, run, runStreaming } from "./exec.mjs";
 
 /**
@@ -564,9 +564,16 @@ export function manualSteps(
   const steps = [];
 
   if (host.skillDelivery === "bundle" && bundle !== null) {
+    // The download link is the same file, built from the same skill at the last release.
+    // Named here so someone reading this on a different machine from the one that built
+    // the archive — or relaying it to someone else — has a copy they can reach.
     steps.push({
       title: "Upload the skill",
-      body: `Settings > Capabilities: turn on code execution and file creation.\nCustomize > Skills: click +, then Create skill, then Upload a skill.\nChoose: ${bundle}`,
+      body:
+        `Settings > Capabilities: turn on code execution and file creation.\n` +
+        `Customize > Skills: click +, then Create skill, then Upload a skill.\n` +
+        `Choose: ${bundle}\n` +
+        `or download the same archive: ${BUNDLE_DOWNLOAD_URL}`,
     });
   }
 

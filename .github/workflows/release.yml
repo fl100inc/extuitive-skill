@@ -1,0 +1,63 @@
+# Attach the Claude Desktop skill bundle to a GitHub release.
+#
+# Claude Desktop's Chat and Cowork tabs take the skill as a `.zip` uploaded through
+# Customize > Skills, and `npx extuitive install --host claude-desktop` exists only to build
+# that file locally. Publishing the same file here gives people a download link instead,
+# so that path needs no terminal at all. The asset name is fixed so the URL is too:
+#
+#   https://github.com/fl100inc/extuitive-skill/releases/latest/download/extuitive.zip
+#
+# Runs on every `v*` tag. `workflow_dispatch` takes a tag name so a release can be created
+# for a tag that was pushed before this workflow existed; the workflow file itself runs from
+# the default branch, and the checkout below is what pins the skill contents to the tag.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and release (e.g. v0.2.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # No dependencies to install: the installer is plain Node and builds the archive with
+      # its own ZIP writer.
+      - name: Build the bundle
+        run: npm run bundle
+
+      - name: Check the bundle
+        run: |
+          unzip -l dist/extuitive.zip
+          unzip -l dist/extuitive.zip | grep -q ' extuitive/SKILL.md$'
+
+      # `create` for a new tag; `upload --clobber` when the release is already there, which
+      # is what a re-run or a backfill of an existing release looks like.
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/extuitive.zip --clobber
+          else
+            gh release create "$TAG" dist/extuitive.zip --title "$TAG" --generate-notes
+          fi
