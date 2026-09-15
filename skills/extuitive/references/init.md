@@ -19,7 +19,23 @@ then the connection is a panel they click through, and telling them to run somet
 send them looking for a terminal they may not have:
 
 > Settings, then Connectors, then Add custom connector, and paste
-> `https://www.extuitive.com/mcp` as the URL.
+> `https://www.extuitive.com/mcp` as the URL. Approve access in the browser window that
+> opens, then start a new chat.
+
+You are reading this, so the skill is already there and the connector is the only missing
+piece. If instead the person is asking you — from a terminal host — to set up the **Chat or
+Cowork tab of Claude Desktop**, the skill is missing there too, and there is still nothing
+to run: the skill is a file they upload and the connector is a panel. Give them all three
+steps and stop:
+
+> 1. Settings > Capabilities — turn on code execution and file creation.
+> 2. Download https://github.com/fl100inc/extuitive-skill/releases/latest/download/extuitive.zip,
+>    then Customize > Skills, +, Create skill, Upload a skill, and choose that file.
+> 3. Settings > Connectors — Add custom connector, paste `https://www.extuitive.com/mcp`,
+>    click Add, and approve access in the browser window that opens. Then start a new chat.
+
+Do not point them at the installer for that tab. It can build the same zip locally, and a
+person holding the download link has no use for that.
 
 Everywhere else, tell them to run:
 
@@ -32,8 +48,9 @@ has been completed, and it prints the exact next command for their host.
 
 **Do not invent setup commands.** They differ per host, they change between versions, and
 `doctor` reads the current ones. A stale command sends someone down a dead end that looks
-like the product is broken. The connector URL above is the one exception, and only because
-it is a URL rather than a command — there is nothing about it to go stale but the address.
+like the product is broken. The two URLs above — the connector and the download — are the
+exception, and only because they are URLs rather than commands: there is nothing about them
+to go stale but the address, and the download always points at the latest release.
 
 Relay what `doctor` prints, in the order it prints it. Three things are worth saying plainly
 while they work through it:
