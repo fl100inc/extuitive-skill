@@ -17,9 +17,10 @@ That puts the skill where your host looks for it, connects the MCP server, and t
 to sign in. Signing in happens in your browser; the installer never handles your credentials.
 
 What "puts" and "connects" mean depends on the host. For Claude Code and Codex it is a
-directory copy and a CLI command. For Claude Desktop, whose skills belong to your account
-rather than to this machine, it is a `.zip` to upload and a connector to add — the command
-builds the first and prints the steps for both.
+directory copy and a CLI command, and the installer is the way to do both. For the Chat and
+Cowork tabs of Claude Desktop, whose skills belong to your account rather than to this
+machine, it is a `.zip` to upload and a connector to add — both done by clicking, and the
+`.zip` is [published for download](#claude-desktop), so that path needs no terminal at all.
 
 **You do not need an Extuitive account first.** The sign-in page has a **Sign up** button
 next to **Log in**, both using a one-time email code, so you can create the account in the
@@ -146,6 +147,9 @@ other:
 With no `--host`, the installer detects what is on the machine and asks. `--host all` takes
 everything it can find. `--host both` still works and still means all of them.
 
+The third row does not need the command at all — everything it does is a click in the app,
+and the one file it would build is [published for download](#claude-desktop).
+
 ### Claude Code
 
 ```bash
@@ -222,26 +226,35 @@ the Codex or ChatGPT desktop app on macOS. Point it somewhere else with `CODEX_C
 
 ### Claude Desktop
 
+No terminal needed. Nothing can be registered or copied into the app from outside it, so the
+install is two things you do in the app, plus one download:
+
+1. **Settings > Capabilities** — turn on code execution and file creation. The Skills section
+   does not appear until you do.
+2. **Download the skill** —
+   [`extuitive.zip`](https://github.com/fl100inc/extuitive-skill/releases/latest/download/extuitive.zip),
+   from this repository's latest release.
+3. **Customize > Skills** — `+`, then Create skill, then Upload a skill, and choose the
+   `extuitive.zip` you just downloaded.
+4. **Settings > Connectors** — Add custom connector, and paste
+   `https://www.extuitive.com/mcp` as the URL. Click Add; Claude reads the URL and fills in
+   the authentication settings it finds there.
+5. Approve access in the browser window that opens, then **start a new chat**.
+
+The same two uploads work on claude.ai in a browser, because both the skill and the
+connector go to your account rather than to the app — which is also why a skill added here
+is on your other devices the next time they sign in.
+
+**From a terminal instead.** If you already have `npx` in front of you:
+
 ```bash
 npx extuitive install --host claude-desktop
 ```
 
-Nothing is registered and nothing is copied into the app, because neither is possible here.
-What the command does is build the archive the app asks for:
-
-```
-# bundle → ~/.extuitive-skill/bundles/extuitive.zip
-```
-
-Then, in the app:
-
-1. **Settings > Capabilities** — turn on code execution and file creation. The Skills section
-   does not appear until you do.
-2. **Customize > Skills** — `+`, then Create skill, then Upload a skill, and choose the
-   `extuitive.zip` the command printed.
-3. **Settings > Connectors** — Add custom connector, and paste
-   `https://www.extuitive.com/mcp` as the URL.
-4. Approve access in the browser window that opens, then **start a new chat**.
+It builds the identical archive locally, at `~/.extuitive-skill/bundles/extuitive.zip`, and
+prints the steps above with that path in place of the download link. The one thing this
+buys you is `update` and `doctor`: they compare the local archive against the skill in the
+latest package and tell you when it is time to upload again, which a downloaded file cannot.
 
 Two things are different here and both are the app's design rather than a limitation of this
 installer.
@@ -408,7 +421,7 @@ Common causes, in the order they usually happen:
   anything.
 - **Claude Desktop has the skill in one tab and not another.** Chat and Cowork read the copy
   uploaded to your account; the Code tab reads `~/.claude/skills`. They are different
-  installs: `--host claude-desktop` and `--host claude` respectively.
+  installs: the [upload](#claude-desktop) for the first two, `--host claude` for the third.
 - **Tools are listed but every call is refused.** Sign-in was never completed. Run `/mcp` in
   Claude Code, `codex mcp login extuitive` in a terminal, or click Connect next to `extuitive`
   in Claude Desktop's Settings > Connectors. `doctor` reads Codex's own answer
@@ -435,6 +448,14 @@ the installer from `@extuitive/skill` and nothing else, so that what people type
 `npx extuitive`. Release the root first, then the launcher, since the launcher depends on it.
 To run the checked-out code without publishing, use `node bin/cli.mjs <command>` from the
 repository root.
+
+The third artifact is the Claude Desktop bundle. Pushing a `vX.Y.Z` tag runs
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which builds it with
+`npm run bundle` (the same code path as `install --host claude-desktop`, written to `dist/`)
+and attaches it to a GitHub release as `extuitive.zip`. That is the file the download link in
+the [Claude Desktop](#claude-desktop) section serves, through GitHub's `latest` redirect, so
+the npm publishes and the tag push are the whole release. The workflow can also be run by
+hand from the Actions tab against an existing tag.
 
 ## Update
 
@@ -505,6 +526,8 @@ skills/extuitive/
   SKILL.md                  routes a command to its reference
   references/               one file per command, plus the full tool reference
   scripts/upload.mjs        byte transfer only; no credentials, no MCP calls
+.github/workflows/
+  release.yml               attaches the Claude Desktop bundle to each tagged release
 ```
 
 `SKILL.md` stays short on purpose: it is loaded whenever the skill is considered, while a

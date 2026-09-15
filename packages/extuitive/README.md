@@ -9,6 +9,10 @@ npx extuitive install
 
 Then, in your agent, say **"Check my Extuitive connection"** to sign in.
 
+Using the Chat or Cowork tab of Claude Desktop? You do not need this command: the skill is
+[published as a `.zip`](https://github.com/fl100inc/extuitive-skill#claude-desktop) to upload
+in the app, and the connector is added in Settings.
+
 Other commands:
 
 ```bash
