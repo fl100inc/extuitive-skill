@@ -52,14 +52,39 @@ jobs:
           unzip -l dist/extuitive.zip
           unzip -l dist/extuitive.zip | grep -q ' extuitive/SKILL.md$'
 
-      # `create` for a new tag; `upload --clobber` when the release is already there, which
-      # is what a re-run or a backfill of an existing release looks like.
+      # The release page is what the README's "latest release" link lands on, so its notes
+      # carry the whole Claude Desktop flow with a direct link to this release's own asset.
+      # Kept in step with the README's Claude Desktop section by hand; there is nothing to
+      # run, so there is nothing to generate it from.
+      - name: Write the release notes
+        env:
+          ASSET_URL: https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/extuitive.zip
+          README_URL: https://github.com/${{ github.repository }}#claude-desktop
+        run: |
+          cat > dist/notes.md <<EOF
+          ## Install in Claude Desktop
+
+          Download [\`extuitive.zip\`]($ASSET_URL). Then, in Claude Desktop:
+
+          1. **Customize > Skills** — click **Add**, choose **Upload skill**, and upload that file.
+          2. **Customize > Connectors** — click **Add**, and enter \`https://www.extuitive.com/mcp\` as the MCP server URL.
+          3. Approve access in the browser window that opens, then start a new chat and say "Check my Extuitive connection".
+
+          If Skills is not in the Customize menu, turn on code execution and file creation under Settings > Capabilities first.
+
+          Claude Code and Codex use the installer instead: \`npx extuitive install\`. Details in the [README]($README_URL).
+          EOF
+
+      # `create` for a new tag; `upload --clobber` plus `edit --notes-file` when the release
+      # is already there, which is what a re-run or a backfill of an existing release looks
+      # like. `--generate-notes` appends the commit list under the notes above.
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/extuitive.zip --clobber
+            gh release edit "$TAG" --notes-file dist/notes.md
           else
-            gh release create "$TAG" dist/extuitive.zip --title "$TAG" --generate-notes
+            gh release create "$TAG" dist/extuitive.zip --title "$TAG" --notes-file dist/notes.md --generate-notes
           fi

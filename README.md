@@ -45,15 +45,19 @@ Desktop there is nothing to run**, so paste this instead:
 > and give me the Claude Desktop steps.
 
 If you are the agent reading this for that person, do not run the installer or tell them to.
-Reply with these three steps and stop:
+Reply with the link and these steps, and stop:
 
-> 1. **Settings > Capabilities** — turn on code execution and file creation.
-> 2. Download
->    [`extuitive.zip`](https://github.com/fl100inc/extuitive-skill/releases/latest/download/extuitive.zip).
->    Then **Customize > Skills**, `+`, Create skill, Upload a skill, and choose that file.
-> 3. **Settings > Connectors** — Add custom connector, paste `https://www.extuitive.com/mcp`,
->    click Add, and approve access in the browser window that opens. Then start a new chat
->    and say "Check my Extuitive connection".
+> Download [`extuitive.zip`](https://github.com/fl100inc/extuitive-skill/releases/latest/download/extuitive.zip)
+> (the [latest release](https://github.com/fl100inc/extuitive-skill/releases/latest)). Then, in Claude Desktop:
+>
+> 1. **Customize > Skills**, click **Add**, choose **Upload skill**, and upload that file.
+> 2. **Customize > Connectors**, click **Add**, and enter `https://www.extuitive.com/mcp` as
+>    the MCP server URL.
+> 3. Approve access in the browser window that opens, then start a new chat and say
+>    "Check my Extuitive connection".
+>
+> If Skills is not in the Customize menu, turn on code execution and file creation under
+> Settings > Capabilities first.
 
 Signing in happens in that browser window and only the person can do it. Both the skill and
 the connector reach a chat when it starts, so the last words are "start a new chat", not "it
@@ -251,25 +255,27 @@ the Codex or ChatGPT desktop app on macOS. Point it somewhere else with `CODEX_C
 ### Claude Desktop
 
 No terminal needed. Nothing can be registered or copied into the app from outside it, so the
-install is two things you do in the app, plus one download:
+install is one download and two things you do in the app:
 
-1. **Settings > Capabilities** — turn on code execution and file creation. The Skills section
-   does not appear until you do.
-2. **Download the skill** —
+1. **Download the skill** —
    [`extuitive.zip`](https://github.com/fl100inc/extuitive-skill/releases/latest/download/extuitive.zip),
-   from this repository's latest release.
-3. **Customize > Skills** — `+`, then Create skill, then Upload a skill, and choose the
+   attached to this repository's
+   [latest release](https://github.com/fl100inc/extuitive-skill/releases/latest).
+2. **Customize > Skills** — click **Add**, choose **Upload skill**, and upload the
    `extuitive.zip` you just downloaded.
-4. **Settings > Connectors** — Add custom connector, and paste
-   `https://www.extuitive.com/mcp` as the URL. Click Add; Claude reads the URL and fills in
-   the authentication settings it finds there.
-5. Approve access in the browser window that opens, then **start a new chat**.
+3. **Customize > Connectors** — click **Add**, and enter `https://www.extuitive.com/mcp` as
+   the MCP server URL. Claude reads the URL and fills in the authentication settings it finds
+   there.
+4. Approve access in the browser window that opens, then **start a new chat**.
+
+If Skills is not in the Customize menu, turn on code execution and file creation under
+**Settings > Capabilities** first; the section appears once you do.
 
 The same two uploads work on claude.ai in a browser, because both the skill and the
 connector go to your account rather than to the app — which is also why a skill added here
 is on your other devices the next time they sign in.
 
-If an agent is walking you through this, those five steps are the whole instruction; see
+If an agent is walking you through this, those four steps are the whole instruction; see
 [Install with an agent](#install-with-an-agent). There is no command for it to run first.
 
 **From a terminal instead.** If you already have `npx` in front of you:
@@ -451,7 +457,7 @@ Common causes, in the order they usually happen:
   installs: the [upload](#claude-desktop) for the first two, `--host claude` for the third.
 - **Tools are listed but every call is refused.** Sign-in was never completed. Run `/mcp` in
   Claude Code, `codex mcp login extuitive` in a terminal, or click Connect next to `extuitive`
-  in Claude Desktop's Settings > Connectors. `doctor` reads Codex's own answer
+  in Claude Desktop's Customize > Connectors. `doctor` reads Codex's own answer
   (`codex mcp list --json` → `auth_status`), so `Sign-in connected` means a token is actually
   stored.
 - **A `403` part-way through an upload.** Presigned URLs last 30 minutes and a whole batch is
@@ -479,10 +485,12 @@ repository root.
 The third artifact is the Claude Desktop bundle. Pushing a `vX.Y.Z` tag runs
 [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds it with
 `npm run bundle` (the same code path as `install --host claude-desktop`, written to `dist/`)
-and attaches it to a GitHub release as `extuitive.zip`. That is the file the download link in
-the [Claude Desktop](#claude-desktop) section serves, through GitHub's `latest` redirect, so
-the npm publishes and the tag push are the whole release. The workflow can also be run by
-hand from the Actions tab against an existing tag.
+and attaches it to a GitHub release as `extuitive.zip`, with release notes that repeat the
+Claude Desktop steps and link to that release's own copy of the file. That is what the
+download link in the [Claude Desktop](#claude-desktop) section serves, through GitHub's
+`latest` redirect, so the npm publishes and the tag push are the whole release. The workflow
+can also be run by hand from the Actions tab against an existing tag. The steps in the notes
+are written in the workflow file; change them there when the section here changes.
 
 ## Update
 
@@ -525,7 +533,7 @@ location, `~/.agents/skills`, if a copy is there — and unregisters the MCP ser
 host. Pass `--keep-server` to drop the skills but keep the tools registered.
 
 On Claude Desktop it deletes the built archive and prints the two removals it cannot do for
-you: the skill, in Customize > Skills, and the connector, in Settings > Connectors. Both live
+you: the skill, in Customize > Skills, and the connector, in Customize > Connectors. Both live
 on the other side of a browser session.
 
 Two things are deliberately left behind.

@@ -217,7 +217,7 @@ export function readHostServerStatus(host, { cliAvailable }) {
   if (status === null) {
     return {
       state: "unverifiable",
-      detail: `${host.label} has no CLI, so its connectors can only be seen in Settings > Connectors.`,
+      detail: `${host.label} has no CLI, so its connectors can only be seen in Customize > Connectors.`,
     };
   }
 
@@ -454,7 +454,7 @@ export async function diagnoseHost(detection, options = {}) {
     // reinstalling a connector that is already there.
     problems.push({
       what: `Whether ${host.label} has the extuitive connector cannot be read from a shell.`,
-      fix: "Check it yourself in Settings > Connectors.",
+      fix: "Check it yourself in Customize > Connectors.",
       advisory: true,
     });
   }
