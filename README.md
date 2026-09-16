@@ -4,8 +4,10 @@ An agent skill for [Extuitive](https://extuitive.com), plus an installer that co
 Claude Code, Codex, or Claude Desktop to the Extuitive MCP server.
 
 An Extuitive workspace is one Facebook ads account. The skill lets an agent pick which account
-to work in, upload creative into it, track how that upload is going, and repair a Meta
-connection that has stopped delivering data.
+to work in, upload creative into it or collect it from someone else through a one-time link,
+track how that upload is going, read what the files contain, register them with the ad
+account, build a paused campaign from them, and repair a Meta connection that has stopped
+delivering data.
 
 Install it from npm:
 
@@ -132,6 +134,9 @@ One skill, `extuitive`, which takes a command:
 | `upload` | Upload a folder of images or videos into a workspace |
 | `upload-status` | Report how the current upload is going |
 | `library` | Say what uploaded files contain, group them into ads, find uploads like or about something |
+| `collect` | Get files from someone without an Extuitive login, through a one-time upload link |
+| `publish` | Register accepted uploads with the Meta ad account, so they have an image hash or video id |
+| `build` | Create a campaign, ad set, creative and ad — paused — or copy and inspect ones that exist |
 | `connect` | Connect Meta, or repair a workspace that has stopped updating |
 
 **The prefix differs by host, and using the wrong one looks like a broken install.**
@@ -152,7 +157,7 @@ passes your wording through, which works because the command word is still sitti
 prompt the model reads.
 
 The CLI hosts take a skill's name from its directory, which is why there is one skill with
-commands rather than six skills — `/extuitive-upload` would need a separate directory each
+commands rather than nine skills — `/extuitive-upload` would need a separate directory each
 time, and the command form reads better and keeps one description in front of the model.
 
 You usually will not type any of it. Asking for the underlying thing — "upload these ads to
@@ -357,16 +362,16 @@ sends bytes, and reports ETags. Your access token stays in your host's credentia
 
 ## Tools
 
-Twenty-nine tools in four groups. Full schemas, the error vocabulary, and the status lifecycle
-for the first three groups are in
-[`skills/extuitive/references/tools.md`](skills/extuitive/references/tools.md); the Meta object
-tools carry their own schemas in the server's tool listing.
+Forty tools in six groups. Full schemas, the error vocabulary, and the three lifecycles —
+upload status, Meta publish, Meta action — are in
+[`skills/extuitive/references/tools.md`](skills/extuitive/references/tools.md).
 
 **Workspaces**
 
 - `list_workspaces` — every workspace you can reach, with the health of its Meta connection.
-  Its `role` and `isOwner` decide who may reconnect Meta and nothing else, and two workspaces
-  can point at the same ad account, so neither field tells you where to upload.
+  Its `role` and `isOwner` decide who may call the owner-only tools (reconnect, one-time links)
+  and nothing else, and two workspaces can point at the same ad account, so neither field
+  tells you where to upload. When the list is empty it carries the setup link inline.
 
 **Meta connection**
 
@@ -376,28 +381,60 @@ tools carry their own schemas in the server's tool listing.
 **Uploads**
 
 - `get_upload_limits` *(workspaceId)* — server-owned ceilings. Never hardcode them.
-- `create_upload_batch` *(workspaceId, files)* — open a batch, get a destination per file.
+- `create_upload_batch` *(workspaceId, files, publishToMeta?, name?)* — open a batch, get a
+  destination per file. Meta is opt-in; `publishToMeta` defaults to `false`.
 - `resign_upload` *(workspaceId, contentId)* — a fresh URL when one expires.
 - `sign_upload_part` *(workspaceId, uploadId, partNumber)* — presign one chunk of a large video.
 - `list_upload_parts` *(workspaceId, uploadId)* — what storage already holds, for resuming.
 - `complete_upload` *(workspaceId, uploadId, parts)* — assemble a multipart upload.
 - `abort_upload` *(workspaceId, uploadId)* — abandon one.
-- `list_upload_batches` *(workspaceId)* — batch history, newest first. The cheap progress check.
-- `get_upload_batch_content` *(workspaceId, batchId)* — per-file rows and status for one batch.
+- `list_upload_batches` *(workspaceId, source?, shareLinkId?)* — batch history, newest first.
+  The cheap progress check.
+- `get_upload_batch_content` *(workspaceId, batchId, filters)* — per-file rows and status for
+  one batch, including each row's `metaPublishStatus`.
 - `get_upload_content` *(workspaceId, contentId)* — one file.
+- `list_upload_content` *(workspaceId, filters, paging)* — files across the workspace, by
+  status, publish state, media kind, source, batch or link.
+- `publish_upload_content_to_meta` *(workspaceId, batchId | contentIds)* — register accepted
+  files with the ad account; the rows then gain `metaImageHash` or `metaVideoId`.
 - `create_browser_upload_link` *(workspaceId)* — hand the transfer back to the browser.
+
+**One-time upload links**
+
+For files held by someone with no Extuitive login. A link is for one person and one batch;
+its URL is returned once, at creation, and never listed again.
+
+- `create_upload_share_link` *(workspaceId, name, expiresInHours?)* — mint one. Owner only.
+- `get_upload_share_link` *(workspaceId, shareLinkId)* — poll it at `suggestedPollSeconds`
+  until `terminal`; the outcome includes every rejected file by name.
+- `list_upload_share_links` *(workspaceId)* — every link, newest first, without URLs.
+- `send_upload_share_link_email` *(workspaceId, shareLinkId, recipientEmail,
+  recipientEmailConfirmed)* — email it, after the address has been read back and confirmed.
+- `revoke_upload_share_link` *(workspaceId, shareLinkId)* — kill it. Irreversible. Owner only.
+
+**Library**
+
+What the creative index knows about a workspace's uploads. Read-only, this workspace only.
+
+- `describe_content` *(workspaceId, contentIds)* — overlay text, tags, description; for video
+  the duration, opening line, transcript and audio type.
+- `group_content_variants` *(workspaceId, batchId)* — which files are one ad at 1:1, 4:5, 9:16.
+- `find_similar_content` *(workspaceId, contentId)* — uploads that look like, or open like, one.
+- `search_content` *(workspaceId, text?, tags?, …)* — uploads matching a description, tags,
+  type or time window.
 
 **Meta objects**
 
 Build and inspect campaigns in the workspace's connected ad account. Creates are submitted as
 actions and settle asynchronously; `get_meta_action` is the only way to learn whether one worked.
+Everything is created `PAUSED` — the server pins it and refuses `ACTIVE` — so nothing built
+here spends until the customer turns it on in Ads Manager.
 
 - `create_meta_campaign` *(workspaceId, params, summary, rationale, clientToken)* — step one of four.
 - `create_meta_adset` *(workspaceId, params, …)* — step two; needs a `campaign_id`.
 - `create_meta_adcreative` *(workspaceId, params, …)* — step three; needs a `page_id` from
   `list_meta_pages` and media already `PUBLISHED` through the upload tools.
 - `create_meta_ad` *(workspaceId, params, …)* — step four; needs an `adset_id` and a `creative_id`.
-  An ad that is not `PAUSED` starts spending as soon as Meta approves it.
 - `get_meta_action` *(workspaceId, actionId)* — poll until `settled`; `EXECUTED` carries the new
   object's `createdId`, `FAILED` carries Meta's own error.
 - `list_meta_actions` *(workspaceId)* — everything created through these tools, newest first.
@@ -405,7 +442,8 @@ actions and settle asynchronously; `get_meta_action` is the only way to learn wh
   read live from Meta, for finding ids of objects that already exist.
 - `get_meta_campaign` / `get_meta_adset` / `get_meta_ad` *(workspaceId, id)* — the full settings
   of one object, including ad set targeting.
-- `list_meta_pages` *(workspaceId)* — pages this workspace can run ads as.
+- `list_meta_pages` *(workspaceId, source?)* — pages this workspace can run ads as, from the
+  Meta connection or live from the ad account.
 - `list_meta_pixels` *(workspaceId)* — conversion pixels, with `lastFiredTime` so you can avoid
   a dead one.
 - `list_meta_instagram_accounts` *(workspaceId)* — Instagram accounts the ad account may
@@ -566,8 +604,8 @@ skills/extuitive/
 ```
 
 `SKILL.md` stays short on purpose: it is loaded whenever the skill is considered, while a
-`references/` file is read only once the agent knows which job it is doing. Putting all six
-flows in the front page would spend context on five of them every time.
+`references/` file is read only once the agent knows which job it is doing. Putting all nine
+flows in the front page would spend context on eight of them every time.
 
 `README.md` lives here at the repo root and nowhere else. Skill directories deliberately do
 not contain one — everything an agent reads belongs in `SKILL.md` or `references/`, and a

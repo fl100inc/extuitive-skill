@@ -60,7 +60,17 @@ export const MCP_SERVER_NAME = "extuitive";
 export const SKILL_NAMES = ["extuitive"];
 
 /** The subcommands the skill routes, used for the usage text and nothing else. */
-export const SKILL_COMMANDS = ["init", "select", "upload", "upload-status", "library", "connect"];
+export const SKILL_COMMANDS = [
+  "init",
+  "select",
+  "upload",
+  "upload-status",
+  "library",
+  "collect",
+  "publish",
+  "build",
+  "connect",
+];
 
 /**
  * What to suggest typing once the install is done.

@@ -23,9 +23,12 @@ In order of preference:
 1. The `batchId` the person gave you, or the one from a `create_upload_batch` call earlier in
    this conversation.
 2. Otherwise call `list_upload_batches` for the workspace. It returns batches newest first
-   with `fileCount`, `pending`, and `statusCounts` per batch. The first entry is the current
-   one. This is also the right call when someone uploaded through a browser link, since you
-   never saw a `batchId` for that.
+   with `fileCount`, `pending`, `statusCounts`, `publishToMeta`, and where set `name`,
+   `source` (`web`, `mcp`, `share_link`) and `shareLinkId` per batch. The first entry is the
+   current one. This is also the right call when someone uploaded through a browser link,
+   since you never saw a `batchId` for that. Filter with `source: "share_link"` or a
+   `shareLinkId` to find the batch a one-time link produced; `collect.md` has that flow, and
+   `get_upload_share_link` is usually the better read for one of those while it is live.
 
 If you do not know which workspace, use the one chosen earlier in this conversation, or call
 `list_workspaces` first when there was none. A `batchId` belongs to the workspace it was
@@ -34,6 +37,12 @@ current one.
 
 A single file uploaded on its own has no `batchId` at all. Use `get_upload_content` with its
 `contentId` instead — same status rules apply.
+
+For a question that spans batches — "which videos from last week are still not accepted",
+"everything that came through that link" — `list_upload_content` filters the whole workspace
+by `status`, `mediaKind`, `source`, `shareLinkId`, `batchId` and `metaPublishStatus`, paged
+by `cursor`. Its counts describe the filtered page, not a batch, so it cannot tell you whether
+a batch has settled; that stays with `get_upload_batch_content`.
 
 ### 2. Poll
 
@@ -64,17 +73,36 @@ indistinguishable from a hang, and the person cannot tell whether to keep waitin
 Then stop. Do not keep polling a settled batch.
 
 Once a batch has settled, "what's in it" is a different job: `library.md` reads the accepted
-files through the creative index. Do not answer that from filenames.
+files through the creative index. Do not answer that from filenames. "Is it in the ad
+account" is different again: see below.
+
+### Meta publish is a second lifecycle, not part of this one
+
+Each row may also carry `metaPublishStatus` — `PENDING`, `PUBLISHING`, `PUBLISHED`, `FAILED`
+— which tracks registering the accepted file with the Meta ad account. It is only present on
+files that were queued for that, by `publishToMeta: true` when the batch was opened or by
+`publish_upload_content_to_meta` later; on most batches it is absent on every row, and
+absent means never queued, not failed.
+
+`settled` and `pending` ignore it entirely. `metaPublishCounts` and `metaPublishPending` on
+the response tally it for the whole batch. So an upload report says "30 of 30 accepted" when
+`settled` is `true`, full stop; if the batch was set to publish, add a separate line — "12 of
+30 registered with Meta so far" — and do not hold the upload report hostage to it.
+
+On `PUBLISHED` the row carries `metaImageHash` (image) or `metaVideoId` and
+`metaVideoThumbUrl` (video). On `FAILED` it carries `metaPublishError`. `publish.md` has the
+table and what to do about a failure; `metaPublishStatus: ["PUBLISHED"]` as a filter finds the
+rows that are done.
 
 ### 4. Read the numbers correctly
 
-`statusCounts`, `pending`, and `settled` always describe the **whole batch**. `count`
-describes only the rows the call returned.
+`statusCounts`, `pending`, `settled`, `metaPublishCounts` and `metaPublishPending` always
+describe the **whole batch**. `count` describes only the rows the call returned.
 
 That distinction bites when you filter. Asking for `status: ["READY"]` gives you just the
 accepted rows, which is often what you want for a list — but `count` is then the number of
-accepted files, not the batch size. Read progress from `statusCounts` and `pending`, never
-from `count`.
+accepted files, not the batch size. The same goes for a `metaPublishStatus` or `mediaKind`
+filter. Read progress from `statusCounts` and `pending`, never from `count`.
 
 Only `READY`, `REJECTED`, and `ABORTED` are final. `VALIDATING` and `EXPIRED` are both still
 counted in `pending`, so a batch is not settled while either remains.

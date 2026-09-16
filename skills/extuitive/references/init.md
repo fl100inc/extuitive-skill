@@ -90,14 +90,15 @@ Once the tools are available, call `list_workspaces`.
 
 - **It returns workspaces.** Setup is done. Say which ones they have and stop.
 - **It returns an empty list.** They are signed in but have no ads account connected yet.
-  Read `connect.md` — it covers exactly this.
+  The same answer carries a `setup` block with the `url` and `nextStep` to hand over; read
+  `connect.md` — it covers exactly this.
 - **It refuses.** They are not signed in. Back to step 1.
 
 ## What "done" means
 
 At least one workspace from `list_workspaces`. Until then, do not start on anything else they
-asked for: uploads and reporting both need a `workspaceId`, and every one of those tools will
-refuse without it.
+asked for: uploads, one-time links, publishing, building and reporting all need a
+`workspaceId`, and every one of those tools will refuse without it.
 
 When setup started from a session with no Extuitive tools, that call belongs to the next
 session, not this one. Finish by handing over the remaining steps and saying which one they

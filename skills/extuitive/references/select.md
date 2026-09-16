@@ -17,8 +17,9 @@ to select from until they are there.
 
 Call `list_workspaces`. It takes no arguments.
 
-An **empty list** means they have no workspace, not that they lack access to one. Read
-`connect.md`; there is nothing to select yet.
+An **empty list** means they have no workspace, not that they lack access to one. The same
+answer carries a `setup` block with the link that fixes it. Read `connect.md`; there is
+nothing to select yet.
 
 **Exactly one** is not a question. Say which workspace you are using and move on — a menu of
 one spends a turn to tell them something they cannot change.
@@ -33,10 +34,12 @@ Give them each workspace with the three fields that actually tell one from anoth
 | Ad account | `facebookAdAccountId`, or say it has none when `null` | What they think of as the account |
 | Connection | `metaConnection.status`, when it is not `healthy` | A stale workspace is still selectable, and they should know that before choosing it |
 
-**Do not order or recommend by `role` or `isOwner`.** Those govern who may reconnect Meta and
-say nothing about uploading — a workspace where they are `viewer` may take files that the one
-where they are `owner` refuses. Presenting one as the right one to work in is a claim you
-cannot make yet.
+**Do not order or recommend by `role` or `isOwner`.** Those govern the owner-only tools —
+reconnecting Meta, and creating, emailing or revoking a one-time upload link — and say
+nothing about uploading, publishing or building. A workspace where they are `viewer` may
+take files that the one where they are `owner` refuses. Presenting one as the right one to
+work in is a claim you cannot make yet. `isOwner` is worth *mentioning* only when the job
+they asked for is one of those owner-only ones, so they are not surprised by a refusal.
 
 **Two rows can carry the same `facebookAdAccountId`.** They are two separate workspaces with
 separate content, not one workspace listed twice. Show both, say they point at the same ad
@@ -79,9 +82,10 @@ change it, and neither `role` nor `isOwner` explains it.
 
 People change their mind mid-conversation. Run this again and replace the selection.
 
-Two things do not follow the switch. A `batchId` belongs to the workspace it was created in,
-so checking on an older batch needs the workspace it was made in, not the current one. And
-files already uploaded stay where they were sent — selecting elsewhere moves nothing.
+Two things do not follow the switch. A `batchId` — and a `shareLinkId`, and an `actionId` —
+belongs to the workspace it was created in, so checking on an older batch, link or Meta
+action needs the workspace it was made in, not the current one. And files already uploaded
+stay where they were sent — selecting elsewhere moves nothing.
 
 ## Choosing without the command
 
