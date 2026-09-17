@@ -18,21 +18,24 @@ person through a chat window rather than a terminal — Claude Desktop is the on
 then the connection is a panel they click through, and telling them to run something would
 send them looking for a terminal they may not have:
 
-> Settings, then Connectors, then Add custom connector, and paste
-> `https://www.extuitive.com/mcp` as the URL. Approve access in the browser window that
-> opens, then start a new chat.
+> Customize, then Connectors, click Add, and enter `https://www.extuitive.com/mcp` as the
+> MCP server URL. Approve access in the browser window that opens, then start a new chat.
 
 You are reading this, so the skill is already there and the connector is the only missing
 piece. If instead the person is asking you — from a terminal host — to set up the **Chat or
 Cowork tab of Claude Desktop**, the skill is missing there too, and there is still nothing
-to run: the skill is a file they upload and the connector is a panel. Give them all three
-steps and stop:
+to run: the skill is a file they upload and the connector is a panel. Give them the link and
+the steps, and stop:
 
-> 1. Settings > Capabilities — turn on code execution and file creation.
-> 2. Download https://github.com/fl100inc/extuitive-skill/releases/latest/download/extuitive.zip,
->    then Customize > Skills, +, Create skill, Upload a skill, and choose that file.
-> 3. Settings > Connectors — Add custom connector, paste `https://www.extuitive.com/mcp`,
->    click Add, and approve access in the browser window that opens. Then start a new chat.
+> Download https://github.com/fl100inc/extuitive-skill/releases/latest/download/extuitive.zip
+> Then, in Claude Desktop:
+> 1. Customize > Skills — click Add, choose Upload skill, and upload that file.
+> 2. Customize > Connectors — click Add, and enter `https://www.extuitive.com/mcp` as the
+>    MCP server URL.
+> 3. Approve access in the browser window that opens, then start a new chat.
+>
+> If Skills is not in the Customize menu, turn on code execution and file creation under
+> Settings > Capabilities first.
 
 Do not point them at the installer for that tab. It can build the same zip locally, and a
 person holding the download link has no use for that.
@@ -40,11 +43,13 @@ person holding the download link has no use for that.
 Everywhere else, tell them to run:
 
 ```bash
-npx github:fl100inc/extuitive-skill doctor
+npx extuitive doctor
 ```
 
 That checks the endpoint, whether this host has the server registered, and whether sign-in
-has been completed, and it prints the exact next command for their host.
+has been completed, and it prints the exact next command for their host. If nothing is
+installed yet, the command to give is `npx extuitive install`, which does all of that and
+puts the skill in place too.
 
 **Do not invent setup commands.** They differ per host, they change between versions, and
 `doctor` reads the current ones. A stale command sends someone down a dead end that looks
@@ -85,14 +90,15 @@ Once the tools are available, call `list_workspaces`.
 
 - **It returns workspaces.** Setup is done. Say which ones they have and stop.
 - **It returns an empty list.** They are signed in but have no ads account connected yet.
-  Read `connect.md` — it covers exactly this.
+  The same answer carries a `setup` block with the `url` and `nextStep` to hand over; read
+  `connect.md` — it covers exactly this.
 - **It refuses.** They are not signed in. Back to step 1.
 
 ## What "done" means
 
 At least one workspace from `list_workspaces`. Until then, do not start on anything else they
-asked for: uploads and reporting both need a `workspaceId`, and every one of those tools will
-refuse without it.
+asked for: uploads, one-time links, publishing, building and reporting all need a
+`workspaceId`, and every one of those tools will refuse without it.
 
 When setup started from a session with no Extuitive tools, that call belongs to the next
 session, not this one. Finish by handing over the remaining steps and saying which one they

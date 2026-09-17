@@ -23,11 +23,14 @@ achieves nothing and wastes their time.
 
 ## No workspaces yet
 
-Call `get_meta_setup_status`. It takes no arguments and answers the question an empty
-`list_workspaces` cannot: whether they never connected Meta, or connected it but never chose
-ad accounts, or connected it and Meta returned no ad accounts.
+An empty `list_workspaces` usually answers this itself: alongside `workspaces: []` it carries
+`setup`, the same payload `get_meta_setup_status` returns. Use it directly. If instead it
+carries only a `nextStep` telling you to call `get_meta_setup_status`, do that — it takes no
+arguments and answers the question an empty list alone cannot: whether they never connected
+Meta, or connected it but never chose ad accounts, or connected it and Meta returned no ad
+accounts.
 
-It gives you back:
+Either way you get back:
 
 - `stage` — which of those situations this is
 - `url` — the page that completes this particular stage
@@ -64,6 +67,22 @@ own settings, not in Extuitive.
 When `canReconnect` is `true`, call `create_meta_reconnect_link` with the `workspaceId`. It
 returns a `url` and a `nextStep`. Same rule as above: relay the `nextStep`, hand over the
 `url`, and note that the page requires sign-in.
+
+## Refusals from other jobs that land here
+
+Some tools say the connection is the problem without you having looked at `metaConnection`:
+
+| From | `error` | Means |
+| --- | --- | --- |
+| `build`, `publish` | `meta_not_connected` | The workspace has no Meta credential to act with |
+| `build` | `not_entitled` | No connected ad account, or the subscription lapsed. Terminal — reconnecting will not fix a lapsed plan |
+| `build` | `workspace_has_multiple_ad_accounts` | The workspace has several ad accounts and the Meta object tools refuse to guess; `metaAdAccountIds` lists them. Fixed in Extuitive, not by reconnecting |
+| `library` | `workspace_has_no_ad_account` | No ad account on the workspace, so nothing to index |
+| `build` (`list_meta_pages`) | The page they expect is under neither `source` | They need to reconnect and grant access to that page — `create_meta_reconnect_link` |
+
+For `meta_not_connected`, check `list_workspaces` for that workspace's `metaConnection` and
+follow the table above. For the others, say what the code means and stop; there is no link
+to hand over.
 
 ## What not to do
 

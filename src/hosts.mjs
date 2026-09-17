@@ -249,7 +249,7 @@ export function getHost(id) {
       // `claude_desktop_config.json` validates stdio servers only. An entry carrying a `url`
       // is not merely ignored — Claude Desktop rewrites the file on next launch with the
       // whole `mcpServers` block removed, taking any hand-written servers with it. A remote
-      // HTTPS endpoint belongs in Settings > Connectors, which also handles the OAuth we
+      // HTTPS endpoint belongs in Customize > Connectors, which also handles the OAuth we
       // need and stores the token where the app expects it.
       mcpSetup: "connector-ui",
       // A skill uploaded to an account is not installed per project, so `--scope project`

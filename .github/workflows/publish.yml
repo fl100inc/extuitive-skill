@@ -1,0 +1,42 @@
+# Publish both npm packages from a `v*` tag using npm trusted publishing (OIDC).
+#
+# No npm token is involved. Each package on npmjs.com lists this workflow file, in this
+# repository, as a trusted publisher, and the npm CLI exchanges the GitHub OIDC token for
+# a short-lived publish credential on its own. That needs `id-token: write` below, a
+# GitHub-hosted runner, and npm >= 11.5.1. Provenance attestations are attached
+# automatically because the repository and both packages are public.
+#
+# `@extuitive/skill` goes first: `extuitive` depends on it at the same version, and that
+# version has to exist on the registry before the dependent package is published.
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # The npm bundled with the runner's Node may predate trusted publishing support.
+      - name: Update npm
+        run: npm install -g npm@latest && npm --version
+
+      - name: Publish @extuitive/skill
+        run: npm publish
+
+      - name: Publish extuitive
+        run: npm publish
+        working-directory: packages/extuitive

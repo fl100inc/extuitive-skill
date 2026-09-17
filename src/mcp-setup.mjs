@@ -129,10 +129,10 @@ export function unregisterCommand(host, { scope = "user" } = {}) {
  */
 export function connectorSteps(host, { endpoint = DEFAULT_MCP_ENDPOINT } = {}) {
   return [
-    "Open Settings, then Connectors.",
-    "Click Add custom connector.",
-    `Paste this as the remote MCP server URL: ${endpoint}`,
-    "Click Add. Claude checks the URL and fills in the authentication settings it finds.",
+    "Open Customize, then Connectors.",
+    "Click Add.",
+    `Enter this as the MCP server URL: ${endpoint}`,
+    "Claude checks the URL and fills in the authentication settings it finds.",
   ];
 }
 
@@ -182,7 +182,7 @@ export function authInstructions(host) {
       // second button matters for the person who closed the window and now sees a
       // connector sitting there doing nothing.
       primary: "Approve access in the browser window that opens after you add the connector.",
-      alternative: "If you closed it, click Connect next to extuitive in Settings > Connectors.",
+      alternative: "If you closed it, click Connect next to extuitive in Customize > Connectors.",
       inSession: false,
     };
   }
@@ -493,7 +493,7 @@ export async function unregisterMcpServer(host, options = {}) {
     return {
       status: "manual_only",
       steps: [
-        "Open Settings, then Connectors.",
+        "Open Customize, then Connectors.",
         `Find ${MCP_SERVER_NAME} and remove it.`,
       ],
     };
@@ -570,10 +570,11 @@ export function manualSteps(
     steps.push({
       title: "Upload the skill",
       body:
-        `Settings > Capabilities: turn on code execution and file creation.\n` +
-        `Customize > Skills: click +, then Create skill, then Upload a skill.\n` +
+        `Customize > Skills: click Add, then Upload skill.\n` +
         `Choose: ${bundle}\n` +
-        `or download the same archive: ${BUNDLE_DOWNLOAD_URL}`,
+        `or download the same archive: ${BUNDLE_DOWNLOAD_URL}\n` +
+        `If Skills is not in the Customize menu, turn on code execution and file creation\n` +
+        `under Settings > Capabilities first.`,
     });
   }
 

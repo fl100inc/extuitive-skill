@@ -483,7 +483,7 @@ function printServerRow(host, report) {
   if (registration.status === "manual_only") {
     // Not a fallback. This host has no CLI and no config file we may write, so the panel
     // is the install. Saying so keeps it from reading as a refusal.
-    row("Connector", "add in app", "Settings > Connectors > Add custom connector");
+    row("Connector", "add in app", "Customize > Connectors > Add");
     return;
   }
 

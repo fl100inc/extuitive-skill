@@ -23,6 +23,11 @@ working `node` and a readable `../scripts/upload.mjs` prove nothing about `~/cre
 path they named does not open, you are in the second case — say so and hand over the link,
 rather than asking them to attach thirty files to the conversation.
 
+A third case is not this job at all: the files are with **someone else who has no Extuitive
+login** — a client, a photographer. That is `collect.md`, a one-time link the owner sends
+them. `create_browser_upload_link` needs the person to be signed in, so it is the wrong tool
+for that.
+
 If the Extuitive tools are missing entirely, read `init.md` instead.
 
 ## 1. Pick the workspace
@@ -58,7 +63,14 @@ silently drop files.
 
 Call `create_upload_batch` with every remaining file declared at once: `fileName`,
 `contentType`, and the real size in `bytes`. Split into several batches if there are more than
-`maxFiles`.
+`maxFiles`. A `name` (3 to 80 characters, "Spring launch hero images") is optional and is how
+the batch is told apart in history later; use one when the person gave you a natural label.
+
+**Leave `publishToMeta` off.** It defaults to `false`, and that means the files land in
+Extuitive and go no further. Set it `true` only when the person has said, in this
+conversation, that they want the files registered with their ad account now — "upload these"
+is not that. Anything left unpublished can be sent later with `publish.md`, so there is
+nothing lost by leaving it off and something real put into an ad account by turning it on.
 
 You get back a `batchId` and one destination per file, in the order you sent them. Keep the
 `batchId` — step 6 and `upload-status.md` both need it.
@@ -154,7 +166,12 @@ when `settled` is `true`.
 `upload-status.md` covers the polling, the status table, and the reporting rules in full. Read
 it rather than repeating the logic here.
 
+If the batch was opened with `publishToMeta: true`, each `READY` row then starts a second,
+separate lifecycle — `metaPublishStatus` — that ends in `PUBLISHED` with a `metaImageHash` or
+`metaVideoId`. `settled` does not wait for it and neither should your upload report; say the
+upload is done, then say separately how the publish is going. `publish.md` has the table.
+
 ## 7. Stop there
 
 Report what landed and wait. Uploading is not an instruction to do anything further with the
-files.
+files — not to publish them to Meta, not to describe them, not to build ads from them.
