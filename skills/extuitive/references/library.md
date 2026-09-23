@@ -110,8 +110,11 @@ Wait a minute and call it once more before summarizing, or say the count is prov
 ### 4. Summarize, in the index's words
 
 One line per ad, not per file. For an image: what the tags and description say is in it, and
-the on-screen text if any. For a video: duration, what it opens on (`transcript_hook`,
-`hook_on_screen_text`), `audio_type`, and whether it has speech.
+the on-screen text if any. For a video: its `summary`, `formats` and `hook_mechanisms` in the
+index's own labels, what it opens on (`hook_spoken_verbatim`, `hook_on_screen_text`), its
+`cta_text` and `offer_text` when present, `audio_type`, and whether it has speech. When
+`analysis_review_required` is true, say the analysis is flagged and name the gate; the
+fields are still worth relaying.
 
 Something like:
 
