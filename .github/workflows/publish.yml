@@ -34,9 +34,12 @@ jobs:
       - name: Update npm
         run: npm install -g npm@latest && npm --version
 
+      # Verbose so the OIDC token exchange shows up in the log; at the default level npm
+      # swallows an exchange failure and falls through to an unauthenticated publish, which
+      # the registry reports as an unhelpful 404.
       - name: Publish @extuitive/skill
-        run: npm publish
+        run: npm publish --loglevel verbose
 
       - name: Publish extuitive
-        run: npm publish
+        run: npm publish --loglevel verbose
         working-directory: packages/extuitive

@@ -406,12 +406,28 @@ Returns `count`, `indexed`, `awaitingAnnotation`, `notIndexedYet`, `unknown`, `f
 
 Default `asset` fields: `media_type`, `on_screen_text`, `visual_tags`, `holistic_description`,
 and on video `duration_seconds`, `transcript_hook`, `hook_holistic_description`,
-`hook_on_screen_text`, `audio_type` (`speech` / `music` / `mixed` / `silent`), `has_speech`.
+`hook_on_screen_text`, `audio_type` (`speech` / `music` / `mixed` / `silent`), `has_speech`,
+plus the creative analysis: `summary` (one sentence on what the ad is), `formats` (the
+index's labels: `ugc_talking_head`, `product_demo`, `listicle`, ...), `hook_mechanisms`
+(`pattern_interrupt`, `bold_claim`, `question`, ...), `hook_spoken_verbatim` (the exact
+opening words), `cta_text` and `offer_text` (verbatim, `null` when absent),
+`analysis_status` and `analysis_review_required`.
 Always present: `asset_sha256`, `content_ids`, `batch_ids`, `uploaded_at`, and the stamps
 `annotated` is read from (`annotated_at` on an image, `video_annotated_at` on a video). On
 request via `fields`: `transcript`, `foreground_description`, `background_description`,
 `hook_visual_tags`, `audio_description`, `spoken_language`, `width`, `height`,
-`aspect_bucket`, `file_names`.
+`aspect_bucket`, `file_names`; more of the analysis with `message_angle`,
+`awareness_stage`, `presentation_styles`, `proof_types`, `claim_count`, `pace_label`,
+`hook_onscreen_verbatim`, `hook_product_visible_at_seconds`, `analysis_blocking_gates`,
+`analysis_advisories`; and the whole timestamped record (beats, claims, transitions, every
+gate) as `analysis_record` — large, so one video at a time.
+
+`analysis_review_required: true` means the index's own cross-checks found a contradiction in
+that video's analysis; `analysis_blocking_gates` names it (`speech_presence_disagreement`:
+its passes disagree on whether anyone speaks; `insufficient_hook`: the opening could not be
+read with confidence; `semantic_contradiction`: timestamps or on-screen text did not line
+up). The fields are still there and still usable — say the analysis is flagged rather than
+dropping it. It is a flag on the analysis, not a judgment of the creative.
 
 The same bytes uploaded twice are one index document with two `content_ids`; both ids get an
 entry.
